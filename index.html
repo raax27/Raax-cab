@@ -399,7 +399,15 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 <input type="file" id="cameraInput"  accept="image/*" capture="user" onchange="handlePhoto(this)" style="display:none">
 <input type="file" id="galleryInput" accept="image/*"               onchange="handlePhoto(this)" style="display:none">
 
-<!-- ── RIDER MODAL ── -->
+<!-- ── CONFIRM MODAL ── -->
+<div class="mbg" id="confirmModal">
+  <div class="modal" style="padding:24px">
+    <div class="mtl" id="confirmTitle" style="font-size:17px;margin-bottom:8px"></div>
+    <div id="confirmBody" style="font-size:13px;color:var(--muted);text-align:center;margin-bottom:20px"></div>
+    <button class="login-btn" id="confirmOkBtn" style="background:var(--red);box-shadow:none">Yes, continue</button>
+    <button class="mcancel" onclick="closeConfirm()">Cancel</button>
+  </div>
+</div>
 <div class="mbg" id="riderModal">
   <div class="modal">
     <div class="mtl" id="riderModalTitle">Add Rider</div>
@@ -567,12 +575,10 @@ function showPinScreen(isFirst) {
 }
 
 function doLogout() {
-  if (confirm('Lock the app?')) {
-    clearSession();
-    pinBuffer = '';
-    showPinScreen(false);
-    goTo('log');
-  }
+  clearSession();
+  pinBuffer = '';
+  showPinScreen(false);
+  goTo('log');
 }
 
 // Change PIN modal
@@ -901,15 +907,31 @@ function saveRider(){
 function deleteRider(){
   if (editingRiderIdx === null) return;
   const r = RIDERS[editingRiderIdx];
-  if (!confirm(`Remove ${r.name} from riders?\n\nTheir trip history will be kept but no longer shown.`)) return;
-  RIDERS.splice(editingRiderIdx, 1);
-  saveRiders();
-  closeRiderModal();
-  renderRidersList();
-  renderRiders();
-  updateStats();
-  showToast('🗑️ '+r.name+' removed');
+  showConfirm('Remove ' + r.name + '?', 'Their trip history will be kept but no longer shown.', () => {
+    RIDERS.splice(editingRiderIdx, 1);
+    saveRiders();
+    closeRiderModal();
+    renderRidersList();
+    renderRiders();
+    updateStats();
+    showToast('🗑️ ' + r.name + ' removed');
+  });
 }
+
+// ── CONFIRM DIALOG (replaces window.confirm, blocked in PWAs) ─
+let _confirmCallback = null;
+function showConfirm(title, body, onOk) {
+  _confirmCallback = onOk;
+  document.getElementById('confirmTitle').textContent = title;
+  document.getElementById('confirmBody').textContent  = body;
+  document.getElementById('confirmOkBtn').onclick = () => { closeConfirm(); if (_confirmCallback) _confirmCallback(); };
+  document.getElementById('confirmModal').classList.add('open');
+}
+function closeConfirm() {
+  document.getElementById('confirmModal').classList.remove('open');
+  _confirmCallback = null;
+}
+document.getElementById('confirmModal').addEventListener('click', function(e){ if(e.target===this) closeConfirm(); });
 
 document.getElementById('riderModal').addEventListener('click',function(e){if(e.target===this)closeRiderModal();});
 
@@ -924,7 +946,9 @@ function goTo(name){
   if(name==='settings') renderRidersList();
 }
 function clearAll(){
-  if(confirm('Delete ALL data? This cannot be undone.')){entries={};save();renderRiders();updateStats();showToast('🗑️ Cleared');}
+  showConfirm('🗑️ Delete ALL data?', 'This cannot be undone.', () => {
+    entries={};save();renderRiders();updateStats();showToast('🗑️ All data cleared');
+  });
 }
 
 // ── TOAST ─────────────────────────────────────────────────────
