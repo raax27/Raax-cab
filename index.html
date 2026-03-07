@@ -1,0 +1,914 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#100d1a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Raax">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Raax — Carpool Tracker</title>
+<link rel="manifest" href="manifest.json">
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+
+<style>
+:root {
+  --bg: #0d0a14;
+  --surface: #130e1f;
+  --card: #1c1530;
+  --border: #2d2450;
+  --accent: #a855f7;
+  --accent-dim: rgba(168,85,247,0.15);
+  --blue: #58a6ff;
+  --green: #3fb950;
+  --red: #f85149;
+  --purple: #bc8cff;
+  --orange: #ffa657;
+  --text: #e6edf3;
+  --muted: #8b949e;
+  --radius: 14px;
+  --fare: 75;
+}
+
+* { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Nunito', sans-serif;
+  user-select: none;
+}
+
+/* ── APP SHELL ── */
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  max-width: 480px;
+  margin: 0 auto;
+  position: relative;
+}
+
+/* ── HEADER ── */
+.header {
+  padding: 16px 20px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.header-left { display: flex; align-items: center; gap: 10px; }
+
+.app-icon {
+  width: 38px; height: 38px;
+  background: var(--accent);
+  border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 20px;
+  box-shadow: 0 0 16px rgba(168,85,247,0.4);
+}
+
+.app-title { font-size: 20px; font-weight: 900; letter-spacing: -0.5px; }
+.app-title span { color: var(--accent); }
+
+.header-date {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--card);
+  padding: 5px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+/* ── QUICK STATS ── */
+.quick-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.qs {
+  padding: 10px 14px;
+  text-align: center;
+  border-right: 1px solid var(--border);
+}
+.qs:last-child { border-right: none; }
+
+.qs-val {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1;
+  margin-bottom: 3px;
+}
+.qs-lbl { font-size: 10px; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; }
+
+/* ── BOTTOM NAV ── */
+.bottom-nav {
+  display: flex;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.nav-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 10px 8px 8px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--muted);
+  font-family: 'Nunito', sans-serif;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  transition: color 0.2s;
+  position: relative;
+}
+
+.nav-btn .nav-icon { font-size: 20px; line-height: 1; }
+.nav-btn.active { color: var(--accent); }
+.nav-btn.active::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 20%; right: 20%;
+  height: 2px;
+  background: var(--accent);
+  border-radius: 0 0 4px 4px;
+}
+
+/* ── SCROLL CONTENT ── */
+.content {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ── SCREENS ── */
+.screen { display: none; padding: 16px; }
+.screen.active { display: block; }
+
+/* ── DATE STRIP ── */
+.date-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-bottom: 16px;
+}
+
+.date-strip label {
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.date-strip input[type="date"] {
+  flex: 1;
+  font-family: 'JetBrains Mono', monospace;
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 14px;
+  -webkit-appearance: none;
+}
+
+.date-strip input:focus { outline: none; border-color: var(--accent); }
+
+/* ── RIDER CARD ── */
+.rider-card {
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 12px;
+  overflow: hidden;
+  transition: border-color 0.2s;
+}
+
+.rider-card.has-data { border-color: var(--rider-clr); }
+
+.rider-top {
+  display: flex;
+  align-items: center;
+  padding: 14px 16px 10px;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.avatar {
+  width: 40px; height: 40px;
+  border-radius: 50%;
+  background: var(--rider-clr);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 17px;
+  font-weight: 900;
+  color: #000;
+  flex-shrink: 0;
+}
+
+.rider-name-row { flex: 1; }
+.rider-name { font-size: 16px; font-weight: 800; }
+.rider-sub  { font-size: 11px; color: var(--muted); margin-top: 1px; }
+
+.rider-amount {
+  text-align: right;
+}
+.amount-paid {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--green);
+}
+.amount-due {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--red);
+}
+
+/* ── TRIP ROWS ── */
+.trip-row {
+  display: flex;
+  align-items: center;
+  padding: 10px 16px;
+  gap: 12px;
+  border-bottom: 1px solid rgba(48,54,61,0.5);
+}
+.trip-row:last-child { border-bottom: none; }
+
+.trip-icon { font-size: 16px; }
+.trip-lbl { font-size: 12px; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: 0.8px; flex: 1; }
+
+.btn-group {
+  display: flex;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1.5px solid var(--border);
+  gap: 0;
+}
+
+.tog {
+  font-family: 'Nunito', sans-serif;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 6px 13px;
+  border: none;
+  background: var(--card);
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.15s;
+  border-right: 1px solid var(--border);
+  letter-spacing: 0.3px;
+}
+.tog:last-child { border-right: none; }
+
+.tog.on-P  { background: rgba(63,185,80,0.25);  color: var(--green); }
+.tog.on-A  { background: rgba(248,81,73,0.2);   color: var(--red);   }
+.tog.on-Y  { background: rgba(63,185,80,0.25);  color: var(--green); }
+.tog.on-N  { background: rgba(248,81,73,0.2);   color: var(--red);   }
+
+.pay-group {
+  margin-left: 8px;
+  opacity: 0.3;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+.pay-group.on { opacity: 1; pointer-events: all; }
+
+/* ── SAVE FAB ── */
+.fab {
+  position: fixed;
+  bottom: calc(70px + env(safe-area-inset-bottom));
+  right: 20px;
+  width: 56px; height: 56px;
+  background: var(--accent);
+  border-radius: 50%;
+  border: none;
+  font-size: 24px;
+  cursor: pointer;
+  box-shadow: 0 4px 20px rgba(168,85,247,0.55);
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.2s;
+  z-index: 50;
+}
+.fab:active { transform: scale(0.92); }
+.fab.hidden { opacity: 0; pointer-events: none; }
+
+/* ── HISTORY ── */
+.history-empty {
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.history-empty .big { font-size: 48px; margin-bottom: 12px; }
+
+.hist-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+
+.hist-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.hist-date {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.hist-amounts {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.hist-paid  { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--green); }
+.hist-pend  { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--red); }
+
+.hist-body { padding: 10px 16px 12px; display: none; }
+.hist-body.open { display: block; }
+
+.hist-rider-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(48,54,61,0.4);
+  font-size: 13px;
+}
+.hist-rider-row:last-child { border-bottom: none; }
+
+.hist-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.hist-rname { flex: 1; font-weight: 700; font-size: 13px; }
+
+.chip {
+  font-size: 10px;
+  font-weight: 800;
+  padding: 2px 7px;
+  border-radius: 5px;
+  letter-spacing: 0.3px;
+}
+.chip-P { background: rgba(63,185,80,0.2); color: var(--green); }
+.chip-A { background: rgba(248,81,73,0.15); color: var(--red); }
+.chip-Y { background: rgba(63,185,80,0.2); color: var(--green); }
+.chip-N { background: rgba(248,81,73,0.15); color: var(--red); }
+.chip-blank { background: var(--card); color: var(--muted); }
+
+/* ── SUMMARY SCREEN ── */
+.summary-hero {
+  background: linear-gradient(135deg, rgba(168,85,247,0.12), rgba(88,166,255,0.06));
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  margin-bottom: 16px;
+  text-align: center;
+}
+
+.hero-val {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 40px;
+  font-weight: 600;
+  color: var(--accent);
+  line-height: 1;
+}
+
+.hero-lbl { font-size: 12px; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin-top: 6px; }
+
+.hero-sub { display: flex; justify-content: center; gap: 24px; margin-top: 14px; }
+.hero-sub-item { text-align: center; }
+.hero-sub-val { font-family: 'JetBrains Mono', monospace; font-size: 18px; font-weight: 600; }
+.hero-sub-lbl { font-size: 10px; color: var(--muted); font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; }
+
+.rider-summary-card {
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.rscard-avatar {
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px; font-weight: 900; color: #000;
+  flex-shrink: 0;
+}
+
+.rscard-info { flex: 1; }
+.rscard-name { font-size: 15px; font-weight: 800; }
+.rscard-rides { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+.rscard-right { text-align: right; }
+.rscard-paid { font-family: 'JetBrains Mono', monospace; font-size: 16px; color: var(--green); font-weight: 600; }
+.rscard-due  { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--red); }
+
+/* ── SECTION LABEL ── */
+.sec-lbl {
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  color: var(--muted);
+  margin-bottom: 10px;
+  margin-top: 4px;
+}
+
+/* ── CLEAR BTN ── */
+.clear-btn {
+  width: 100%;
+  padding: 13px;
+  background: rgba(248,81,73,0.1);
+  border: 1.5px solid rgba(248,81,73,0.3);
+  border-radius: var(--radius);
+  color: var(--red);
+  font-family: 'Nunito', sans-serif;
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+  margin-top: 20px;
+  transition: all 0.2s;
+}
+.clear-btn:active { background: rgba(248,81,73,0.2); }
+
+/* ── TOAST ── */
+.toast {
+  position: fixed;
+  bottom: calc(76px + env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%) translateY(20px);
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  padding: 10px 20px;
+  border-radius: 100px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: all 0.3s cubic-bezier(0.34,1.56,0.64,1);
+  z-index: 200;
+}
+.toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* ── INSTALL BANNER ── */
+.install-banner {
+  background: var(--accent-dim);
+  border: 1px solid rgba(168,85,247,0.3);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+}
+.install-banner .ib-icon { font-size: 22px; }
+.install-banner .ib-text { flex: 1; }
+.install-banner .ib-title { font-size: 13px; font-weight: 800; color: var(--accent); }
+.install-banner .ib-sub { font-size: 11px; color: var(--muted); }
+.install-banner .ib-close { font-size: 18px; color: var(--muted); padding: 4px; }
+.install-banner.hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- HEADER -->
+  <div class="header">
+    <div class="header-left">
+      <div class="app-icon">🚗</div>
+      <div class="app-title">R<span>aax</span></div>
+    </div>
+    <div class="header-date" id="hdrDate">—</div>
+  </div>
+
+  <!-- QUICK STATS -->
+  <div class="quick-stats">
+    <div class="qs">
+      <div class="qs-val" id="qsCollected" style="color:var(--green)">₹0</div>
+      <div class="qs-lbl">Collected</div>
+    </div>
+    <div class="qs">
+      <div class="qs-val" id="qsPending" style="color:var(--red)">₹0</div>
+      <div class="qs-lbl">Pending</div>
+    </div>
+    <div class="qs">
+      <div class="qs-val" id="qsTrips" style="color:var(--blue)">0</div>
+      <div class="qs-lbl">Trips</div>
+    </div>
+  </div>
+
+  <!-- SCROLLABLE CONTENT -->
+  <div class="content">
+
+    <!-- SCREEN: LOG -->
+    <div id="screen-log" class="screen active">
+      <div id="installBanner" class="install-banner hidden">
+        <div class="ib-icon">📲</div>
+        <div class="ib-text">
+          <div class="ib-title">Install as App</div>
+          <div class="ib-sub">Tap to add to your home screen</div>
+        </div>
+        <div class="ib-close" onclick="dismissInstall()">✕</div>
+      </div>
+
+      <div class="date-strip">
+        <label>📅 Date</label>
+        <input type="date" id="logDate" onchange="onDateChange()">
+      </div>
+
+      <div class="sec-lbl">Riders — Mark Present / Paid</div>
+      <div id="ridersContainer"></div>
+    </div>
+
+    <!-- SCREEN: HISTORY -->
+    <div id="screen-history" class="screen">
+      <div class="sec-lbl">All Logged Entries</div>
+      <div id="historyContainer"></div>
+    </div>
+
+    <!-- SCREEN: SUMMARY -->
+    <div id="screen-summary" class="screen">
+      <div id="summaryContainer"></div>
+      <button class="clear-btn" onclick="clearAll()">🗑️ Clear All Data</button>
+    </div>
+
+  </div>
+
+  <!-- SAVE FAB -->
+  <button class="fab" id="saveFab" onclick="saveEntry()" title="Save Entry">💾</button>
+
+  <!-- BOTTOM NAV -->
+  <div class="bottom-nav">
+    <button class="nav-btn active" id="nav-log" onclick="goTo('log')">
+      <span class="nav-icon">📋</span>Log
+    </button>
+    <button class="nav-btn" id="nav-history" onclick="goTo('history')">
+      <span class="nav-icon">📊</span>History
+    </button>
+    <button class="nav-btn" id="nav-summary" onclick="goTo('summary')">
+      <span class="nav-icon">💰</span>Summary
+    </button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ── CONFIG ─────────────────────────────────────────────────────
+const FARE = 75;
+const RIDERS = [
+  { name:'Akshata', clr:'#e879f9', emoji:'A' },
+  { name:'Vignesh', clr:'#58a6ff', emoji:'V' },
+  { name:'Swayam',  clr:'#3fb950', emoji:'S' },
+  { name:'Tangu',   clr:'#bc8cff', emoji:'T' },
+];
+
+// ── STATE ──────────────────────────────────────────────────────
+let entries = JSON.parse(localStorage.getItem('rsPWA_entries') || '{}');
+
+function save() { localStorage.setItem('rsPWA_entries', JSON.stringify(entries)); }
+
+function todayStr() {
+  const d = new Date();
+  return d.toISOString().split('T')[0];
+}
+
+function getDay(date) {
+  if (!entries[date]) {
+    entries[date] = {};
+    RIDERS.forEach(r => { entries[date][r.name] = {mP:'',mPaid:'',eP:'',ePaid:''}; });
+  }
+  return entries[date];
+}
+
+// ── STATS ──────────────────────────────────────────────────────
+function calcRider(name) {
+  let paidR=0, unpaidR=0;
+  Object.values(entries).forEach(day => {
+    const d = day[name];
+    if (!d) return;
+    if (d.mP==='P' && d.mPaid==='Y') paidR++;
+    if (d.eP==='P' && d.ePaid==='Y') paidR++;
+    if (d.mP==='P' && d.mPaid==='N') unpaidR++;
+    if (d.eP==='P' && d.ePaid==='N') unpaidR++;
+  });
+  return { paidR, unpaidR, paid: paidR*FARE, pending: unpaidR*FARE };
+}
+
+function calcDay(day) {
+  let paid=0, pending=0;
+  RIDERS.forEach(r => {
+    const d = day[r.name] || {};
+    if (d.mP==='P' && d.mPaid==='Y') paid+=FARE;
+    if (d.eP==='P' && d.ePaid==='Y') paid+=FARE;
+    if (d.mP==='P' && d.mPaid==='N') pending+=FARE;
+    if (d.eP==='P' && d.ePaid==='N') pending+=FARE;
+  });
+  return { paid, pending };
+}
+
+function updateStats() {
+  let tc=0, tp=0, tt=0;
+  Object.values(entries).forEach(day => {
+    const { paid, pending } = calcDay(day);
+    tc += paid; tp += pending;
+    RIDERS.forEach(r => {
+      const d = day[r.name] || {};
+      if (d.mP==='P') tt++;
+      if (d.eP==='P') tt++;
+    });
+  });
+  document.getElementById('qsCollected').textContent = '₹'+tc;
+  document.getElementById('qsPending').textContent   = '₹'+tp;
+  document.getElementById('qsTrips').textContent     = tt;
+}
+
+// ── LOG SCREEN ─────────────────────────────────────────────────
+function renderRiders() {
+  const date = document.getElementById('logDate').value;
+  const day  = getDay(date);
+  const con  = document.getElementById('ridersContainer');
+  con.innerHTML = '';
+
+  RIDERS.forEach(rider => {
+    const d = day[rider.name];
+    const stats = calcRider(rider.name);
+    const hasAny = d.mP || d.eP;
+
+    con.innerHTML += `
+    <div class="rider-card ${hasAny?'has-data':''}" style="--rider-clr:${rider.clr}">
+      <div class="rider-top">
+        <div class="avatar" style="background:${rider.clr}">${rider.emoji}</div>
+        <div class="rider-name-row">
+          <div class="rider-name">${rider.name}</div>
+          <div class="rider-sub">${stats.paidR+stats.unpaidR} rides this month</div>
+        </div>
+        <div class="rider-amount">
+          <div class="amount-paid">₹${stats.paid}</div>
+          ${stats.pending>0?`<div class="amount-due">₹${stats.pending} due</div>`:''}
+        </div>
+      </div>
+      <div class="trip-row">
+        <span class="trip-icon">🌅</span>
+        <span class="trip-lbl">Morning</span>
+        <div class="btn-group">
+          <button class="tog ${d.mP==='P'?'on-P':''}" onclick="tog('${rider.name}','mP','P')">P</button>
+          <button class="tog ${d.mP==='A'?'on-A':''}" onclick="tog('${rider.name}','mP','A')">A</button>
+        </div>
+        <div class="btn-group pay-group ${d.mP==='P'?'on':''}" id="mpg-${rider.name}">
+          <button class="tog ${d.mPaid==='Y'?'on-Y':''}" onclick="tog('${rider.name}','mPaid','Y')">✓</button>
+          <button class="tog ${d.mPaid==='N'?'on-N':''}" onclick="tog('${rider.name}','mPaid','N')">✗</button>
+        </div>
+      </div>
+      <div class="trip-row">
+        <span class="trip-icon">🌆</span>
+        <span class="trip-lbl">Evening</span>
+        <div class="btn-group">
+          <button class="tog ${d.eP==='P'?'on-P':''}" onclick="tog('${rider.name}','eP','P')">P</button>
+          <button class="tog ${d.eP==='A'?'on-A':''}" onclick="tog('${rider.name}','eP','A')">A</button>
+        </div>
+        <div class="btn-group pay-group ${d.eP==='P'?'on':''}" id="epg-${rider.name}">
+          <button class="tog ${d.ePaid==='Y'?'on-Y':''}" onclick="tog('${rider.name}','ePaid','Y')">✓</button>
+          <button class="tog ${d.ePaid==='N'?'on-N':''}" onclick="tog('${rider.name}','ePaid','N')">✗</button>
+        </div>
+      </div>
+    </div>`;
+  });
+}
+
+function tog(rider, field, val) {
+  const date = document.getElementById('logDate').value;
+  const day  = getDay(date);
+  day[rider][field] = day[rider][field]===val ? '' : val;
+  if (field==='mP' && day[rider][field]!=='P') day[rider].mPaid='';
+  if (field==='eP' && day[rider][field]!=='P') day[rider].ePaid='';
+  save(); renderRiders(); updateStats();
+}
+
+function onDateChange() { renderRiders(); }
+
+function saveEntry() {
+  const date = document.getElementById('logDate').value;
+  getDay(date); // ensure entry exists
+  save(); updateStats(); showToast('✅ Saved for '+date);
+}
+
+// ── HISTORY SCREEN ─────────────────────────────────────────────
+function renderHistory() {
+  const con = document.getElementById('historyContainer');
+  const dates = Object.keys(entries).filter(d => {
+    // only show dates with at least some data
+    return RIDERS.some(r => {
+      const x = entries[d][r.name] || {};
+      return x.mP || x.eP;
+    });
+  }).sort().reverse();
+
+  if (!dates.length) {
+    con.innerHTML = `<div class="history-empty"><div class="big">📭</div>No entries yet.<br>Log your first trip!</div>`;
+    return;
+  }
+
+  con.innerHTML = dates.map(date => {
+    const day = entries[date];
+    const t = calcDay(day);
+    const riderChips = RIDERS.map(r => {
+      const d = day[r.name] || {};
+      if (!d.mP && !d.eP) return '';
+      return `
+      <div class="hist-rider-row">
+        <div class="hist-dot" style="background:${r.clr}"></div>
+        <div class="hist-rname">${r.name}</div>
+        <span class="chip chip-${d.mP||'blank'}">${d.mP||'—'}</span>
+        ${d.mP==='P'?`<span class="chip chip-${d.mPaid||'blank'}">${d.mPaid==='Y'?'Paid':d.mPaid==='N'?'Due':'?'}</span>`:''}
+        <span style="color:var(--muted);font-size:11px;margin:0 4px">|</span>
+        <span class="chip chip-${d.eP||'blank'}">${d.eP||'—'}</span>
+        ${d.eP==='P'?`<span class="chip chip-${d.ePaid||'blank'}">${d.ePaid==='Y'?'Paid':d.ePaid==='N'?'Due':'?'}</span>`:''}
+      </div>`;
+    }).join('');
+
+    return `
+    <div class="hist-card">
+      <div class="hist-header" onclick="toggleHist(this)">
+        <div class="hist-date">${formatDate(date)}</div>
+        <div class="hist-amounts">
+          ${t.paid>0?`<span class="hist-paid">+₹${t.paid}</span>`:''}
+          ${t.pending>0?`<span class="hist-pend">₹${t.pending} due</span>`:''}
+        </div>
+        <span style="color:var(--muted);font-size:14px;margin-left:8px">▾</span>
+      </div>
+      <div class="hist-body">${riderChips}</div>
+    </div>`;
+  }).join('');
+}
+
+function toggleHist(el) {
+  const body = el.nextElementSibling;
+  body.classList.toggle('open');
+}
+
+function formatDate(str) {
+  const d = new Date(str+'T00:00:00');
+  return d.toLocaleDateString('en-IN', { weekday:'short', day:'numeric', month:'short' });
+}
+
+// ── SUMMARY SCREEN ─────────────────────────────────────────────
+function renderSummary() {
+  let grand=0, grandPend=0;
+  RIDERS.forEach(r => { const s=calcRider(r.name); grand+=s.paid; grandPend+=s.pending; });
+
+  const cards = RIDERS.map(r => {
+    const s = calcRider(r.name);
+    return `
+    <div class="rider-summary-card">
+      <div class="rscard-avatar" style="background:${r.clr}">${r.emoji}</div>
+      <div class="rscard-info">
+        <div class="rscard-name">${r.name}</div>
+        <div class="rscard-rides">${s.paidR} paid · ${s.unpaidR} unpaid · ${s.paidR+s.unpaidR} total rides</div>
+      </div>
+      <div class="rscard-right">
+        <div class="rscard-paid">₹${s.paid}</div>
+        ${s.pending>0?`<div class="rscard-due">₹${s.pending} due</div>`:'<div class="rscard-due" style="color:var(--green)">All clear ✓</div>'}
+      </div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('summaryContainer').innerHTML = `
+    <div class="summary-hero">
+      <div class="hero-val">₹${grand}</div>
+      <div class="hero-lbl">Total Collected</div>
+      <div class="hero-sub">
+        <div class="hero-sub-item">
+          <div class="hero-sub-val" style="color:var(--red)">₹${grandPend}</div>
+          <div class="hero-sub-lbl">Pending</div>
+        </div>
+        <div class="hero-sub-item">
+          <div class="hero-sub-val" style="color:var(--blue)">${Object.keys(entries).length}</div>
+          <div class="hero-sub-lbl">Days</div>
+        </div>
+      </div>
+    </div>
+    <div class="sec-lbl">Per Rider Breakdown</div>
+    ${cards}
+  `;
+}
+
+// ── NAV ────────────────────────────────────────────────────────
+let currentScreen = 'log';
+
+function goTo(name) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('screen-'+name).classList.add('active');
+  document.getElementById('nav-'+name).classList.add('active');
+  document.getElementById('saveFab').classList.toggle('hidden', name!=='log');
+  currentScreen = name;
+  if (name==='history') renderHistory();
+  if (name==='summary') renderSummary();
+}
+
+// ── CLEAR ──────────────────────────────────────────────────────
+function clearAll() {
+  if (confirm('Delete ALL data? This cannot be undone.')) {
+    entries = {};
+    save();
+    renderRiders(); updateStats(); renderSummary();
+    showToast('🗑️ All data cleared');
+  }
+}
+
+// ── TOAST ──────────────────────────────────────────────────────
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+// ── INSTALL PWA ────────────────────────────────────────────────
+let deferredPrompt = null;
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  deferredPrompt = e;
+  const b = document.getElementById('installBanner');
+  if (!localStorage.getItem('installDismissed')) b.classList.remove('hidden');
+  b.onclick = async () => {
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    b.classList.add('hidden');
+    deferredPrompt = null;
+  };
+});
+
+function dismissInstall() {
+  document.getElementById('installBanner').classList.add('hidden');
+  localStorage.setItem('installDismissed', '1');
+}
+
+// ── INIT ───────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', () => {
+  // Set today's date
+  document.getElementById('logDate').value = todayStr();
+  document.getElementById('hdrDate').textContent =
+    new Date().toLocaleDateString('en-IN', { weekday:'short', day:'numeric', month:'short', year:'numeric' });
+
+  renderRiders();
+  updateStats();
+
+  // Register service worker
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(()=>{});
+  }
+});
+</script>
+</body>
+</html>
