@@ -441,150 +441,135 @@ function saveP() { localStorage.setItem('rsPWA_photos',  JSON.stringify(photos))
 function todayStr() { return new Date().toISOString().split('T')[0]; }
 
 // ── PIN AUTH ──────────────────────────────────────────────────
-async function hashStr(str) {
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
-  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+// Simple obfuscation — good enough to protect a carpool log
+function encodePin(str) {
+  return btoa('raax_' + str + '_pin');
 }
-function getPin()     { return localStorage.getItem('rsPWA_pin') || null; }
-function savePin(h)   { localStorage.setItem('rsPWA_pin', h); }
-function isLoggedIn() { return sessionStorage.getItem('rsPWA_sess') === '1'; }
-function setSession() { sessionStorage.setItem('rsPWA_sess', '1'); }
+function getPin()      { return localStorage.getItem('rsPWA_pin') || null; }
+function savePin(pin)  { localStorage.setItem('rsPWA_pin', encodePin(pin)); }
+function checkPin(pin) { return encodePin(pin) === getPin(); }
+function isLoggedIn()  { return sessionStorage.getItem('rsPWA_sess') === '1'; }
+function setSession()  { sessionStorage.setItem('rsPWA_sess', '1'); }
 function clearSession(){ sessionStorage.removeItem('rsPWA_sess'); }
 
-let pinBuffer = '';
-let pinMode   = 'login'; // 'login' | 'setup'
-const PIN_MAX = 6;
+let pinBuffer        = '';
+let pinMode          = 'login';   // 'login' | 'setup' | 'confirm'
+let pinSetupFirst    = '';
 
-function updateDots(state) {
-  // state: 'normal' | 'error' | 'success'
-  for (let i=0;i<PIN_MAX;i++) {
-    const el = document.getElementById('pd'+i);
-    if (!el) continue;
-    el.className = 'pin-dot';
-    if (i < pinBuffer.length) el.classList.add(state==='error'?'error':state==='success'?'success':'filled');
+function syncDots(count) {
+  const dots = document.getElementById('pinDots').children;
+  for (let i = 0; i < dots.length; i++) {
+    dots[i].className = 'pin-dot' + (i < count ? ' filled' : '');
   }
 }
 
-function syncDots(count) {
-  for (let i=0;i<PIN_MAX;i++) {
-    const el = document.getElementById('pd'+i);
-    if (!el) return;
-    el.className = 'pin-dot' + (i < count ? ' filled' : '');
+function flashDots(state) {
+  // state: 'error' | 'success'
+  const dots = document.getElementById('pinDots').children;
+  for (let i = 0; i < dots.length; i++) {
+    dots[i].className = 'pin-dot ' + state;
   }
 }
 
 function setPinDotCount(n) {
-  // show correct number of dots based on PIN length
   const wrap = document.getElementById('pinDots');
   wrap.innerHTML = '';
-  for (let i=0;i<n;i++) {
+  for (let i = 0; i < n; i++) {
     const d = document.createElement('div');
     d.className = 'pin-dot';
-    d.id = 'pd'+i;
     wrap.appendChild(d);
   }
 }
 
 function pinKey(digit) {
-  if (pinBuffer.length >= PIN_MAX) return;
+  if (pinBuffer.length >= 4) return;
   pinBuffer += digit;
   syncDots(pinBuffer.length);
   document.getElementById('pinMsg').className = 'pin-msg';
-
-  // Flash button
-  const btns = document.querySelectorAll('.pk');
-  btns.forEach(b => { if(b.textContent.trim().startsWith(digit) && b.querySelector('span')?.textContent===digit) b.classList.add('pressed'); });
-  setTimeout(()=>btns.forEach(b=>b.classList.remove('pressed')),120);
-
-  // Auto-submit when enough digits entered
-  const minLen = getPin() ? 4 : 4; // at least 4
-  if (pinBuffer.length >= 4) {
-    // for setup we wait for user to tap confirm, but auto-check on login
-    if (pinMode === 'login') {
-      setTimeout(()=>submitPin(), 100);
-    }
+  if (pinBuffer.length === 4) {
+    setTimeout(() => handlePinComplete(), 150);
   }
 }
 
 function pinDel() {
   if (!pinBuffer.length) return;
-  pinBuffer = pinBuffer.slice(0,-1);
+  pinBuffer = pinBuffer.slice(0, -1);
   syncDots(pinBuffer.length);
 }
 
-async function submitPin() {
-  if (!pinBuffer) return;
-  const stored = getPin();
-
-  if (pinMode === 'setup') {
-    // First time: need confirm step
-    if (!window._pinSetupFirst) {
-      // store first entry, ask to confirm
-      window._pinSetupFirst = pinBuffer;
-      pinBuffer = '';
-      syncDots(0);
-      setMsg('Confirm your PIN', '');
-      return;
+function handlePinComplete() {
+  if (pinMode === 'login') {
+    if (checkPin(pinBuffer)) {
+      flashDots('success');
+      setSession();
+      setTimeout(() => {
+        document.getElementById('pinWrap').classList.remove('show');
+      }, 300);
+    } else {
+      flashDots('error');
+      if (navigator.vibrate) navigator.vibrate([80, 40, 80]);
+      setMsg('Wrong PIN. Try again.', 'err');
+      setTimeout(() => { pinBuffer = ''; syncDots(0); setMsg('Enter your PIN', ''); }, 900);
     }
-    // Confirm step
-    if (pinBuffer !== window._pinSetupFirst) {
-      window._pinSetupFirst = null;
-      shakeError('PINs don\'t match. Try again.');
-      return;
-    }
-    const h = await hashStr(pinBuffer);
-    savePin(h);
-    window._pinSetupFirst = null;
-    successUnlock('PIN set! Welcome to Raax 🚗');
     return;
   }
 
-  // Normal login
-  const h = await hashStr(pinBuffer);
-  if (h === stored) {
-    successUnlock();
-  } else {
-    shakeError('Wrong PIN. Try again.');
+  if (pinMode === 'setup') {
+    // First entry
+    pinSetupFirst = pinBuffer;
+    pinBuffer = '';
+    syncDots(0);
+    pinMode = 'confirm';
+    setMsg('Confirm your PIN', '');
+    return;
   }
-}
 
-function shakeError(msg) {
-  updateDots('error');
-  setMsg(msg, 'err');
-  // vibrate if supported
-  if (navigator.vibrate) navigator.vibrate([80,40,80]);
-  setTimeout(()=>{ pinBuffer=''; syncDots(0); setMsg(pinMode==='login'?'Enter your PIN':'Choose a PIN (4–6 digits)',''); }, 900);
-}
-
-function successUnlock(toastMsg) {
-  updateDots('success');
-  setSession();
-  setTimeout(()=>{
-    document.getElementById('pinWrap').classList.remove('show');
-    if (toastMsg) showToast('✅ '+toastMsg);
-  }, 350);
+  if (pinMode === 'confirm') {
+    if (pinBuffer === pinSetupFirst) {
+      savePin(pinBuffer);
+      flashDots('success');
+      setSession();
+      setTimeout(() => {
+        document.getElementById('pinWrap').classList.remove('show');
+        showToast('✅ PIN set! Welcome to Raax 🚗');
+      }, 300);
+    } else {
+      flashDots('error');
+      if (navigator.vibrate) navigator.vibrate([80, 40, 80]);
+      setMsg("PINs don't match. Start over.", 'err');
+      pinSetupFirst = '';
+      setTimeout(() => {
+        pinBuffer = '';
+        syncDots(0);
+        pinMode = 'setup';
+        setMsg('Create a 4-digit PIN', '');
+      }, 900);
+    }
+    return;
+  }
 }
 
 function setMsg(text, cls) {
   const el = document.getElementById('pinMsg');
   el.textContent = text;
-  el.className = 'pin-msg' + (cls ? ' '+cls : '');
+  el.className = 'pin-msg' + (cls ? ' ' + cls : '');
 }
 
 function showPinScreen(isFirst) {
   pinBuffer = '';
-  window._pinSetupFirst = null;
+  pinSetupFirst = '';
   pinMode = isFirst ? 'setup' : 'login';
-  setPinDotCount(isFirst ? 6 : 4); // show 6 slots for setup, 4 for login (expands naturally)
+  setPinDotCount(4);
   syncDots(0);
-  setMsg(isFirst ? 'Create a PIN (4–6 digits)' : 'Enter your PIN', '');
+  setMsg(isFirst ? 'Create a 4-digit PIN' : 'Enter your PIN', '');
   document.getElementById('pinSubtitle').textContent = isFirst ? 'FIRST TIME SETUP' : 'CARPOOL TRACKER';
   document.getElementById('pinWrap').classList.add('show');
 }
 
 function doLogout() {
   if (confirm('Lock the app?')) {
-    clearSession(); pinBuffer='';
+    clearSession();
+    pinBuffer = '';
     showPinScreen(false);
     goTo('log');
   }
@@ -592,31 +577,29 @@ function doLogout() {
 
 // Change PIN modal
 function openCpModal() {
-  ['cpOld','cpNew','cpConf'].forEach(id=>document.getElementById(id).value='');
-  document.getElementById('cpErr').textContent='';
+  ['cpOld','cpNew','cpConf'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('cpErr').textContent = '';
   document.getElementById('cpModal').classList.add('open');
-  setTimeout(()=>document.getElementById('cpOld').focus(),300);
+  setTimeout(() => document.getElementById('cpOld').focus(), 300);
 }
-function closeCpModal(){ document.getElementById('cpModal').classList.remove('open'); }
+function closeCpModal() { document.getElementById('cpModal').classList.remove('open'); }
 
-async function doChangePin() {
+function doChangePin() {
   const oldV  = document.getElementById('cpOld').value.trim();
   const newV  = document.getElementById('cpNew').value.trim();
   const confV = document.getElementById('cpConf').value.trim();
   const errEl = document.getElementById('cpErr');
-  errEl.textContent='';
-  if (!oldV||!newV||!confV){ errEl.textContent='Fill all fields.'; return; }
-  if (!/^\d{4,6}$/.test(newV)){ errEl.textContent='New PIN must be 4–6 digits.'; return; }
-  if (newV!==confV){ errEl.textContent='New PINs do not match.'; return; }
-  const oldH = await hashStr(oldV);
-  if (oldH !== getPin()){ errEl.textContent='Current PIN is incorrect.'; return; }
-  const newH = await hashStr(newV);
-  savePin(newH);
+  errEl.textContent = '';
+  if (!oldV || !newV || !confV) { errEl.textContent = 'Fill all fields.'; return; }
+  if (!/^\d{4,6}$/.test(newV))  { errEl.textContent = 'New PIN must be 4–6 digits.'; return; }
+  if (newV !== confV)            { errEl.textContent = 'New PINs do not match.'; return; }
+  if (!checkPin(oldV))           { errEl.textContent = 'Current PIN is incorrect.'; return; }
+  savePin(newV);
   closeCpModal();
   showToast('✅ PIN updated!');
 }
 
-document.getElementById('cpModal').addEventListener('click',function(e){if(e.target===this)closeCpModal();});
+document.getElementById('cpModal').addEventListener('click', function(e) { if (e.target === this) closeCpModal(); });
 
 function getDay(date) {
   if (!entries[date]) { entries[date]={}; RIDERS.forEach(r=>{ entries[date][r.name]={mP:'',mPaid:'',eP:'',ePaid:''}; }); }
