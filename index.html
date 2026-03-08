@@ -3,6 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; script-src 'self' 'unsafe-inline'; connect-src 'none'; frame-ancestors 'none';">
+<meta http-equiv="X-Content-Type-Options" content="nosniff">
 <meta name="theme-color" content="#0d0a14">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -286,9 +288,9 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 <div class="mbg" id="cpModal">
   <div class="modal">
     <div class="mtl">🔐 Change PIN</div>
-    <div class="fin"><label>Current PIN</label><input type="password" inputmode="numeric" id="cpOld" placeholder="••••" maxlength="6"></div>
-    <div class="fin"><label>New PIN (4–6 digits)</label><input type="password" inputmode="numeric" id="cpNew" placeholder="••••" maxlength="6"></div>
-    <div class="fin"><label>Confirm New PIN</label><input type="password" inputmode="numeric" id="cpConf" placeholder="••••" maxlength="6"></div>
+    <div class="fin"><label>Current PIN</label><input type="password" inputmode="numeric" id="cpOld" placeholder="••••" maxlength="6" autocomplete="off"></div>
+    <div class="fin"><label>New PIN (4–6 digits)</label><input type="password" inputmode="numeric" id="cpNew" placeholder="••••" maxlength="6" autocomplete="new-password"></div>
+    <div class="fin"><label>Confirm New PIN</label><input type="password" inputmode="numeric" id="cpConf" placeholder="••••" maxlength="6" autocomplete="new-password"></div>
     <div class="login-err" id="cpErr"></div>
     <button class="login-btn" onclick="doChangePin()" style="margin-top:8px">Update PIN</button>
     <button class="mcancel" onclick="closeCpModal()">Cancel</button>
@@ -449,13 +451,22 @@ function saveP() { localStorage.setItem('rsPWA_photos',  JSON.stringify(photos))
 function todayStr() { return new Date().toISOString().split('T')[0]; }
 
 // ── PIN AUTH ──────────────────────────────────────────────────
-// Simple obfuscation — good enough to protect a carpool log
-function encodePin(str) {
-  return btoa('raax_' + str + '_pin');
+// PBKDF2-based PIN hashing — strong, one-way, salted
+const PIN_SALT = 'raax-carpool-2024-static-salt'; // static salt per app instance
+
+async function hashPin(pin) {
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(pin), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt: enc.encode(PIN_SALT), iterations: 100000, hash: 'SHA-256' },
+    keyMaterial, 256
+  );
+  return Array.from(new Uint8Array(bits)).map(b => b.toString(16).padStart(2,'0')).join('');
 }
-function getPin()      { return localStorage.getItem('rsPWA_pin') || null; }
-function savePin(pin)  { localStorage.setItem('rsPWA_pin', encodePin(pin)); }
-function checkPin(pin) { return encodePin(pin) === getPin(); }
+
+function getPin()     { return localStorage.getItem('rsPWA_pin') || null; }
+async function savePin(pin)  { localStorage.setItem('rsPWA_pin', await hashPin(pin)); }
+async function checkPin(pin) { return (await hashPin(pin)) === getPin(); }
 function isLoggedIn()  { return sessionStorage.getItem('rsPWA_sess') === '1'; }
 function setSession()  { sessionStorage.setItem('rsPWA_sess', '1'); }
 function clearSession(){ sessionStorage.removeItem('rsPWA_sess'); }
@@ -505,9 +516,9 @@ function pinDel() {
   syncDots(pinBuffer.length);
 }
 
-function handlePinComplete() {
+async function handlePinComplete() {
   if (pinMode === 'login') {
-    if (checkPin(pinBuffer)) {
+    if (await checkPin(pinBuffer)) {
       flashDots('success');
       setSession();
       setTimeout(() => {
@@ -523,7 +534,6 @@ function handlePinComplete() {
   }
 
   if (pinMode === 'setup') {
-    // First entry
     pinSetupFirst = pinBuffer;
     pinBuffer = '';
     syncDots(0);
@@ -534,7 +544,7 @@ function handlePinComplete() {
 
   if (pinMode === 'confirm') {
     if (pinBuffer === pinSetupFirst) {
-      savePin(pinBuffer);
+      await savePin(pinBuffer);
       flashDots('success');
       setSession();
       setTimeout(() => {
@@ -590,7 +600,7 @@ function openCpModal() {
 }
 function closeCpModal() { document.getElementById('cpModal').classList.remove('open'); }
 
-function doChangePin() {
+async function doChangePin() {
   const oldV  = document.getElementById('cpOld').value.trim();
   const newV  = document.getElementById('cpNew').value.trim();
   const confV = document.getElementById('cpConf').value.trim();
@@ -599,8 +609,8 @@ function doChangePin() {
   if (!oldV || !newV || !confV) { errEl.textContent = 'Fill all fields.'; return; }
   if (!/^\d{4,6}$/.test(newV))  { errEl.textContent = 'New PIN must be 4–6 digits.'; return; }
   if (newV !== confV)            { errEl.textContent = 'New PINs do not match.'; return; }
-  if (!checkPin(oldV))           { errEl.textContent = 'Current PIN is incorrect.'; return; }
-  savePin(newV);
+  if (!(await checkPin(oldV)))   { errEl.textContent = 'Current PIN is incorrect.'; return; }
+  await savePin(newV);
   closeCpModal();
   showToast('✅ PIN updated!');
 }
@@ -641,12 +651,24 @@ function updateStats() {
   document.getElementById('qsT').textContent=tt;
 }
 
+// ── SECURITY: HTML escape for all user-controlled strings in innerHTML ──
+function esc(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/`/g, '&#96;');
+}
+
 // ── AVATAR ────────────────────────────────────────────────────
 function avHTML(rider) {
-  const img=photos[rider.name];
-  return `<div class="av-wrap" onclick="openPhotoModal('${rider.name}')">
+  const img = photos[rider.name];
+  // Use data-rider attribute instead of inline onclick to avoid XSS
+  return `<div class="av-wrap" data-rider="${esc(rider.name)}" data-action="photo">
     <div class="av" style="background:${img?'#1c1530':rider.clr};border-color:${rider.clr}">
-      ${img?`<img src="${img}" alt="${rider.name}">`:`<span>${rider.name[0]}</span>`}
+      ${img?`<img src="${img}" alt="${esc(rider.name)}">`:`<span>${esc(rider.name[0])}</span>`}
     </div>
     <div class="av-edit">✎</div>
   </div>`;
@@ -654,26 +676,28 @@ function avHTML(rider) {
 
 // ── RENDER RIDERS ─────────────────────────────────────────────
 function renderRiders() {
-  const date=document.getElementById('logDate').value;
-  const day=getDay(date);
-  const con=document.getElementById('ridersContainer');
-  con.innerHTML='';
+  const date = document.getElementById('logDate').value;
+  const day  = getDay(date);
+  const con  = document.getElementById('ridersContainer');
+  con.innerHTML = '';
 
-  RIDERS.forEach(rider=>{
-    const d=day[rider.name];
-    const s=calcR(rider.name);
-    const hasAny=d.mP||d.eP;
-    const mVis=d.mP==='P'?'vis':'';
-    const eVis=d.eP==='P'?'vis':'';
-    const mBadge=d.mP?`<span class="sbadge ${d.mP==='P'?'sp':'sa'}">${d.mP==='P'?'Present':'Absent'}</span>`:'';
-    const eBadge=d.eP?`<span class="sbadge ${d.eP==='P'?'sp':'sa'}">${d.eP==='P'?'Present':'Absent'}</span>`:'';
+  RIDERS.forEach(rider => {
+    const d = day[rider.name];
+    const s = calcR(rider.name);
+    const hasAny  = d.mP || d.eP;
+    const mVis    = d.mP === 'P' ? 'vis' : '';
+    const eVis    = d.eP === 'P' ? 'vis' : '';
+    const mBadge  = d.mP ? `<span class="sbadge ${d.mP==='P'?'sp':'sa'}">${d.mP==='P'?'Present':'Absent'}</span>` : '';
+    const eBadge  = d.eP ? `<span class="sbadge ${d.eP==='P'?'sp':'sa'}">${d.eP==='P'?'Present':'Absent'}</span>` : '';
+    const rn      = esc(rider.name);
 
-    con.innerHTML+=`
-    <div class="rc ${hasAny?'hd2':''}" style="--rcl:${rider.clr}">
+    // Use data-attributes for all event handling — no rider name in onclick
+    con.innerHTML += `
+    <div class="rc ${hasAny?'hd2':''}" style="--rcl:${rider.clr}" data-rider="${rn}">
       <div class="rtop">
         ${avHTML(rider)}
         <div class="rinfo">
-          <div class="rname">${rider.name}</div>
+          <div class="rname">${rn}</div>
           <div class="rsub">${s.pR+s.uR} rides logged</div>
         </div>
         <div class="ramts">
@@ -681,32 +705,50 @@ function renderRiders() {
           ${s.pending>0?`<div class="adue">₹${s.pending} due</div>`:''}
         </div>
       </div>
-
       <div class="tblk">
         <div class="thead2"><span class="ti">🌅</span><span class="tl">Morning</span>${mBadge}</div>
         <div class="tpa">
-          <button class="tb ${d.mP==='P'?'tbP':''}" onclick="tog('${rider.name}','mP','P')">✓ Present</button>
-          <button class="tb ${d.mP==='A'?'tbA':''}" onclick="tog('${rider.name}','mP','A')">✗ Absent</button>
+          <button class="tb ${d.mP==='P'?'tbP':''}" data-rider="${rn}" data-field="mP" data-val="P">✓ Present</button>
+          <button class="tb ${d.mP==='A'?'tbA':''}" data-rider="${rn}" data-field="mP" data-val="A">✗ Absent</button>
         </div>
         <div class="tpay ${mVis}">
-          <button class="tb ${d.mPaid==='Y'?'tbY':''}" onclick="tog('${rider.name}','mPaid','Y')">💸 Paid</button>
-          <button class="tb ${d.mPaid==='N'?'tbN':''}" onclick="tog('${rider.name}','mPaid','N')">⏳ Not Paid</button>
+          <button class="tb ${d.mPaid==='Y'?'tbY':''}" data-rider="${rn}" data-field="mPaid" data-val="Y">💸 Paid</button>
+          <button class="tb ${d.mPaid==='N'?'tbN':''}" data-rider="${rn}" data-field="mPaid" data-val="N">⏳ Not Paid</button>
         </div>
       </div>
-
       <div class="tblk">
         <div class="thead2"><span class="ti">🌆</span><span class="tl">Evening</span>${eBadge}</div>
         <div class="tpa">
-          <button class="tb ${d.eP==='P'?'tbP':''}" onclick="tog('${rider.name}','eP','P')">✓ Present</button>
-          <button class="tb ${d.eP==='A'?'tbA':''}" onclick="tog('${rider.name}','eP','A')">✗ Absent</button>
+          <button class="tb ${d.eP==='P'?'tbP':''}" data-rider="${rn}" data-field="eP" data-val="P">✓ Present</button>
+          <button class="tb ${d.eP==='A'?'tbA':''}" data-rider="${rn}" data-field="eP" data-val="A">✗ Absent</button>
         </div>
         <div class="tpay ${eVis}">
-          <button class="tb ${d.ePaid==='Y'?'tbY':''}" onclick="tog('${rider.name}','ePaid','Y')">💸 Paid</button>
-          <button class="tb ${d.ePaid==='N'?'tbN':''}" onclick="tog('${rider.name}','ePaid','N')">⏳ Not Paid</button>
+          <button class="tb ${d.ePaid==='Y'?'tbY':''}" data-rider="${rn}" data-field="ePaid" data-val="Y">💸 Paid</button>
+          <button class="tb ${d.ePaid==='N'?'tbN':''}" data-rider="${rn}" data-field="ePaid" data-val="N">⏳ Not Paid</button>
         </div>
       </div>
     </div>`;
   });
+
+  // Attach delegated event listener to container
+  con.onclick = (e) => {
+    const btn = e.target.closest('[data-field]');
+    const photo = e.target.closest('[data-action="photo"]');
+    if (btn) {
+      const rider = btn.dataset.rider;
+      const field = btn.dataset.field;
+      const val   = btn.dataset.val;
+      // Validate field and val are whitelisted — no user input reaches tog()
+      const allowedFields = ['mP','mPaid','eP','ePaid'];
+      const allowedVals   = ['P','A','Y','N'];
+      if (allowedFields.includes(field) && allowedVals.includes(val)) {
+        tog(rider, field, val);
+      }
+    }
+    if (photo) {
+      openPhotoModal(photo.dataset.rider);
+    }
+  };
 }
 
 function tog(rider,field,val) {
@@ -763,8 +805,8 @@ function renderHistory(){
       const d=day[r.name]||{}; if(!d.mP&&!d.eP) return '';
       const img=photos[r.name];
       return `<div class="hrrow">
-        <div class="hav" style="background:${img?'#1c1530':r.clr}">${img?`<img src="${img}">`:`${r.name[0]}`}</div>
-        <div class="hrn">${r.name}</div>
+        <div class="hav" style="background:${img?'#1c1530':r.clr}">${img?`<img src="${img}" alt="${esc(r.name)}">`:`${esc(r.name[0])}`}</div>
+        <div class="hrn">${esc(r.name)}</div>
         <span class="chip c${d.mP||'_'}">${d.mP||'—'}</span>
         ${d.mP==='P'?`<span class="chip c${d.mPaid||'_'}">${d.mPaid==='Y'?'Paid':d.mPaid==='N'?'Due':'?'}</span>`:''}
         <span style="color:var(--border);font-size:10px;margin:0 2px">|</span>
@@ -793,8 +835,8 @@ function renderSummary(){
   const cards=RIDERS.map(r=>{
     const s=calcR(r.name); const img=photos[r.name];
     return `<div class="rsc">
-      <div class="rsav" style="background:${img?'#1c1530':r.clr}">${img?`<img src="${img}">`:`${r.name[0]}`}</div>
-      <div class="rsin"><div class="rsnm">${r.name}</div><div class="rsrd">${s.pR} paid · ${s.uR} unpaid · ${s.pR+s.uR} rides</div></div>
+      <div class="rsav" style="background:${img?'#1c1530':r.clr}">${img?`<img src="${img}" alt="${esc(r.name)}">`:`${esc(r.name[0])}`}</div>
+      <div class="rsin"><div class="rsnm">${esc(r.name)}</div><div class="rsrd">${s.pR} paid · ${s.uR} unpaid · ${s.pR+s.uR} rides</div></div>
       <div class="rsrt">
         <div class="rspd">₹${s.paid}</div>
         ${s.pending>0?`<div class="rsdu">₹${s.pending} due</div>`:`<div class="rsdu" style="color:var(--green)">All clear ✓</div>`}
@@ -821,13 +863,18 @@ function renderRidersList(){
   if (!list) return;
   list.innerHTML = RIDERS.map((r,i)=>{
     const img = photos[r.name];
-    const avInner = img ? `<img src="${img}">` : r.name[0];
-    return `<div class="rider-srow" onclick="openRiderModal(${i})">
+    const avInner = img ? `<img src="${img}" alt="${esc(r.name)}">` : esc(r.name[0]);
+    return `<div class="rider-srow" data-idx="${i}">
       <div class="rsrow-av" style="background:${img?'transparent':r.clr}">${avInner}</div>
-      <div class="rsrow-name">${r.name}</div>
+      <div class="rsrow-name">${esc(r.name)}</div>
       <span class="rsrow-edit">Edit ›</span>
     </div>`;
   }).join('');
+  // Delegated click — no rider name in onclick
+  list.onclick = (e) => {
+    const row = e.target.closest('[data-idx]');
+    if (row) openRiderModal(parseInt(row.dataset.idx));
+  };
 }
 
 function openRiderModal(idx){
@@ -871,6 +918,9 @@ function saveRider(){
 
   if (!name){ errEl.textContent = 'Please enter a name.'; return; }
   if (name.length < 2){ errEl.textContent = 'Name must be at least 2 characters.'; return; }
+  if (name.length > 20){ errEl.textContent = 'Name must be 20 characters or less.'; return; }
+  // Only allow letters, spaces, hyphens, apostrophes — block all special chars
+  if (!/^[\p{L}\p{M}'\- ]+$/u.test(name)){ errEl.textContent = 'Name can only contain letters, spaces, hyphens and apostrophes.'; return; }
 
   const isNew = editingRiderIdx === null;
 
