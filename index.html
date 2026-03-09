@@ -148,6 +148,14 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .toast{position:fixed;bottom:calc(72px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%) translateY(16px);background:var(--card);border:1px solid var(--border);color:var(--text);font-size:13px;font-weight:700;padding:10px 20px;border-radius:100px;white-space:nowrap;opacity:0;pointer-events:none;transition:all .3s cubic-bezier(.34,1.56,.64,1);z-index:200;}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
 
+/* ── PULL TO REFRESH ── */
+.ptr-indicator{position:fixed;top:0;left:50%;transform:translateX(-50%) translateY(-60px);z-index:300;background:var(--surface);border:1.5px solid var(--border);border-radius:50px;padding:8px 18px;font-size:12px;font-weight:800;color:var(--accent);display:flex;align-items:center;gap:8px;transition:transform .25s cubic-bezier(.34,1.56,.64,1),opacity .2s;opacity:0;pointer-events:none;}
+.ptr-indicator.visible{opacity:1;}
+.ptr-indicator.triggered{transform:translateX(-50%) translateY(14px);}
+.ptr-spin{display:inline-block;transition:transform .3s;}
+.ptr-spin.spinning{animation:spin .7s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+@keyframes hpulse{0%{box-shadow:0 0 0 0 rgba(168,85,247,.5)}70%{box-shadow:0 0 0 8px rgba(168,85,247,0)}100%{box-shadow:0 0 0 0 rgba(168,85,247,0)}}
 /* INSTALL BANNER */
 .ibanner{background:var(--ad);border:1px solid rgba(168,85,247,.3);border-radius:var(--r);padding:11px 14px;margin-bottom:14px;display:flex;align-items:center;gap:10px;cursor:pointer;}
 .ibanner .ii{font-size:20px;} .ibanner .it{flex:1;} .ibanner .itl{font-size:13px;font-weight:800;color:var(--accent);} .ibanner .isl{font-size:11px;color:var(--muted);} .ibanner .ic{font-size:16px;color:var(--muted);padding:4px;}
@@ -284,7 +292,49 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
   </div>
 </div>
 
-<!-- ── CHANGE PIN MODAL ── -->
+<!-- ── SETUP WIZARD ── -->
+<div class="pin-wrap" id="setupWrap" style="justify-content:flex-start;padding-top:60px;overflow-y:auto;">
+  <div class="pin-logo" style="margin-bottom:20px">
+    <div class="pin-icon">🚗</div>
+    <div class="pin-title">R<span>aax</span></div>
+    <div class="pin-subtitle">WELCOME! LET'S SET UP</div>
+  </div>
+
+  <!-- Step 1: App name -->
+  <div id="setupStep1" style="width:100%;max-width:380px">
+    <div class="login-card-title" style="font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;color:var(--muted);margin-bottom:14px;text-align:center;">Step 1 of 2 — Your Details</div>
+    <div style="background:var(--surface);border:1.5px solid var(--border);border-radius:20px;padding:22px;">
+      <div class="fin">
+        <label>Your Name (Admin)</label>
+        <input type="text" id="setupAdminName" placeholder="e.g. Ravi" autocapitalize="words" maxlength="20" style="letter-spacing:0;text-align:left;font-family:Nunito,sans-serif;font-size:16px;font-weight:700;">
+      </div>
+      <div class="fin">
+        <label>Fare per ride (₹)</label>
+        <input type="number" id="setupFare" placeholder="e.g. 75" min="1" max="9999" value="75" inputmode="numeric" style="letter-spacing:0;text-align:left;font-family:Nunito,sans-serif;font-size:16px;font-weight:700;">
+      </div>
+      <div class="login-err" id="setupErr1"></div>
+      <button class="login-btn" onclick="setupStep1Next()">Next →</button>
+    </div>
+  </div>
+
+  <!-- Step 2: Add riders -->
+  <div id="setupStep2" style="width:100%;max-width:380px;display:none">
+    <div class="login-card-title" style="font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:1.5px;color:var(--muted);margin-bottom:14px;text-align:center;">Step 2 of 2 — Add Riders</div>
+    <div style="background:var(--surface);border:1.5px solid var(--border);border-radius:20px;padding:22px;">
+      <div style="font-size:12px;color:var(--muted);font-weight:700;margin-bottom:14px;text-align:center;">Add the people who share your cab. You can always add more later.</div>
+      <div id="setupRiderList" style="margin-bottom:12px;"></div>
+      <div class="fin" style="margin-bottom:8px">
+        <label>Rider Name</label>
+        <input type="text" id="setupRiderName" placeholder="Enter name" autocapitalize="words" maxlength="20" style="letter-spacing:0;text-align:left;font-family:Nunito,sans-serif;font-size:15px;font-weight:700;">
+      </div>
+      <div class="color-grid" id="setupColorGrid" style="margin-bottom:12px;"></div>
+      <div class="login-err" id="setupErr2"></div>
+      <button class="login-btn" onclick="setupAddRider()" style="background:var(--surface);border:1.5px solid var(--accent);color:var(--accent);box-shadow:none;margin-bottom:10px;">＋ Add Rider</button>
+      <button class="login-btn" id="setupFinishBtn" onclick="setupFinish()" style="opacity:0.4;pointer-events:none;">Start Using Raax 🚗</button>
+    </div>
+  </div>
+</div>
+
 <div class="mbg" id="cpModal">
   <div class="modal">
     <div class="mtl">🔐 Change PIN</div>
@@ -295,6 +345,12 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
     <button class="login-btn" onclick="doChangePin()" style="margin-top:8px">Update PIN</button>
     <button class="mcancel" onclick="closeCpModal()">Cancel</button>
   </div>
+</div>
+
+<!-- ── PULL TO REFRESH INDICATOR ── -->
+<div class="ptr-indicator" id="ptrIndicator">
+  <span class="ptr-spin" id="ptrSpinner">↓</span>
+  <span id="ptrLabel">Pull to refresh</span>
 </div>
 
 <div class="app">
@@ -330,7 +386,11 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         <button class="sbtn" onclick="saveEntry()">💾 Save</button>
       </div>
 
-      <div class="sl">Riders — Mark Present / Paid</div>
+      <div class="sl" style="display:flex;align-items:center;justify-content:space-between;">
+        <span>Riders</span>
+        <button onclick="toggleFilter()" id="filterToggleBtn" style="background:none;border:1px solid var(--border);border-radius:8px;color:var(--muted);font-family:Nunito,sans-serif;font-size:11px;font-weight:800;padding:4px 10px;cursor:pointer;">⚙ Filter</button>
+      </div>
+      <div id="filterBar" style="display:none;flex-wrap:wrap;gap:8px;margin-bottom:12px;"></div>
       <div id="ridersContainer"></div>
     </div>
 
@@ -351,6 +411,31 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
       <div class="sl">Riders</div>
       <div class="scard" id="ridersList"></div>
       <button class="add-rider-btn" onclick="openRiderModal(null)">＋ Add New Rider</button>
+
+      <div class="sl" style="margin-top:20px">App Settings</div>
+      <div class="scard">
+        <div class="srow" style="cursor:default;">
+          <span class="sri">💰</span>
+          <div class="srt"><div class="srn">Fare per Ride</div><div class="srd">Used for all calculations</div></div>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span style="color:var(--muted);font-size:13px;font-weight:800;">₹</span>
+            <input type="number" id="fareInput" min="1" max="9999" inputmode="numeric"
+              style="width:64px;background:var(--card);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;padding:6px 8px;text-align:center;"
+              onchange="saveFareSetting()" oninput="saveFareSetting()">
+          </div>
+        </div>
+      </div>
+
+      <div class="sl" style="margin-top:20px">Last Updated</div>
+      <div class="scard">
+        <div class="srow" style="cursor:default;">
+          <span class="sri">🕐</span>
+          <div class="srt">
+            <div class="srn" id="lastUpdatedDate">No entries yet</div>
+            <div class="srd" id="lastUpdatedTime">—</div>
+          </div>
+        </div>
+      </div>
 
       <div class="sl" style="margin-top:20px">Install App</div>
       <div class="scard">
@@ -483,24 +568,201 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 </div>
 
 <script>
-const FARE = 75;
-const DEFAULT_RIDERS = [
-  { name:'Akshata', clr:'#e879f9' },
-  { name:'Vignesh', clr:'#58a6ff' },
-  { name:'Swayam',  clr:'#3fb950' },
-  { name:'Tangu',   clr:'#bc8cff' },
-];
+let FARE = parseInt(localStorage.getItem('rsPWA_fare') || '75');
+function saveFareSetting() {
+  const input = document.getElementById('fareInput');
+  if (!input) return;
+  const val = parseInt(input.value);
+  if (!val || val < 1 || val > 9999) return;
+  FARE = val;
+  localStorage.setItem('rsPWA_fare', String(val));
+  updateStats();
+  showToast('💰 Fare updated to ₹' + val);
+}
 const COLORS = ['#e879f9','#a855f7','#58a6ff','#3fb950','#fbbf24','#f87171','#34d399','#60a5fa','#fb923c','#a78bfa'];
 
-let RIDERS = JSON.parse(localStorage.getItem('rsPWA_riders') || 'null') || DEFAULT_RIDERS;
-function saveRiders(){ localStorage.setItem('rsPWA_riders', JSON.stringify(RIDERS)); }
+// RIDERS: no defaults — user defines them in setup
+let RIDERS       = JSON.parse(localStorage.getItem('rsPWA_riders')  || '[]');
+let activeFilter = JSON.parse(localStorage.getItem('rsPWA_filter')  || 'null'); // null = show all
+let adminName    = localStorage.getItem('rsPWA_admin') || '';
+
+function saveRiders()  { localStorage.setItem('rsPWA_riders',  JSON.stringify(RIDERS)); }
+function saveFilter()  { localStorage.setItem('rsPWA_filter',  JSON.stringify(activeFilter)); }
+function saveAdmin(n)  { localStorage.setItem('rsPWA_admin',   n); }
+
+// Riders currently shown on dashboard (respects filter)
+function visibleRiders() {
+  if (!activeFilter || activeFilter.length === 0) return RIDERS;
+  return RIDERS.filter(r => activeFilter.includes(r.name));
+}
 
 let entries = JSON.parse(localStorage.getItem('rsPWA_entries') || '{}');
 let photos  = JSON.parse(localStorage.getItem('rsPWA_photos')  || '{}');
-function save()  { localStorage.setItem('rsPWA_entries', JSON.stringify(entries)); }
+function save()  {
+  localStorage.setItem('rsPWA_entries', JSON.stringify(entries));
+  stampLastUpdated();
+}
 function saveP() { localStorage.setItem('rsPWA_photos',  JSON.stringify(photos));  }
 
+function stampLastUpdated() {
+  localStorage.setItem('rsPWA_lastUpdated', new Date().toISOString());
+  renderLastUpdated();
+}
+
+function renderLastUpdated() {
+  const raw = localStorage.getItem('rsPWA_lastUpdated');
+  const dateEl = document.getElementById('lastUpdatedDate');
+  const timeEl = document.getElementById('lastUpdatedTime');
+  if (!dateEl || !timeEl) return;
+  if (!raw) { dateEl.textContent = 'No entries yet'; timeEl.textContent = '—'; return; }
+  const d = new Date(raw);
+  dateEl.textContent = d.toLocaleDateString('en-IN', {weekday:'long', day:'numeric', month:'long', year:'numeric'});
+  timeEl.textContent = d.toLocaleTimeString('en-IN', {hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:true});
+}
+
 function todayStr() { return new Date().toISOString().split('T')[0]; }
+
+// ── SETUP WIZARD ──────────────────────────────────────────────
+let setupTempRiders  = [];
+let setupSelectedClr = COLORS[0];
+
+function isSetupDone() { return localStorage.getItem('rsPWA_setup') === '1'; }
+function markSetupDone(){ localStorage.setItem('rsPWA_setup', '1'); }
+
+function showSetupWizard() {
+  setupTempRiders  = [];
+  setupSelectedClr = COLORS[0];
+  document.getElementById('setupWrap').classList.add('show');
+  renderSetupColorGrid();
+  renderSetupRiderList();
+}
+function hideSetupWizard() {
+  document.getElementById('setupWrap').classList.remove('show');
+}
+
+function setupStep1Next() {
+  const name = document.getElementById('setupAdminName').value.trim();
+  const fareVal = parseInt(document.getElementById('setupFare').value);
+  const err  = document.getElementById('setupErr1');
+  err.textContent = '';
+  if (!name || name.length < 2) { err.textContent = 'Please enter your name.'; return; }
+  if (!/^[\p{L}\p{M}'\- ]+$/u.test(name)) { err.textContent = 'Letters only please.'; return; }
+  if (!fareVal || fareVal < 1 || fareVal > 9999) { err.textContent = 'Enter a valid fare (1–9999).'; return; }
+  adminName = name;
+  FARE = fareVal;
+  saveAdmin(name);
+  localStorage.setItem('rsPWA_fare', String(fareVal));
+  document.getElementById('setupStep1').style.display = 'none';
+  document.getElementById('setupStep2').style.display = 'block';
+  document.getElementById('setupRiderName').focus();
+}
+
+function renderSetupColorGrid() {
+  const grid = document.getElementById('setupColorGrid');
+  if (!grid) return;
+  grid.innerHTML = COLORS.map(c =>
+    `<div class="color-swatch ${c===setupSelectedClr?'selected':''}" style="background:${c}" onclick="setupPickColor('${c}')">${c===setupSelectedClr?'✓':''}</div>`
+  ).join('');
+}
+
+function setupPickColor(c) { setupSelectedClr = c; renderSetupColorGrid(); }
+
+function renderSetupRiderList() {
+  const list = document.getElementById('setupRiderList');
+  if (!list) return;
+  if (!setupTempRiders.length) { list.innerHTML = '<div style="text-align:center;color:var(--muted);font-size:12px;padding:8px 0;">No riders added yet</div>'; return; }
+  list.innerHTML = setupTempRiders.map((r,i) =>
+    `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);">
+      <div style="width:28px;height:28px;border-radius:50%;background:${r.clr};flex-shrink:0;"></div>
+      <div style="flex:1;font-size:14px;font-weight:700;">${esc(r.name)}</div>
+      <button onclick="setupRemoveRider(${i})" style="background:none;border:none;color:var(--red);font-size:16px;cursor:pointer;">✕</button>
+    </div>`
+  ).join('');
+}
+
+function setupRemoveRider(i) {
+  setupTempRiders.splice(i, 1);
+  renderSetupRiderList();
+  updateSetupFinishBtn();
+}
+
+function setupAddRider() {
+  const nameEl = document.getElementById('setupRiderName');
+  const err    = document.getElementById('setupErr2');
+  const name   = nameEl.value.trim();
+  err.textContent = '';
+  if (!name || name.length < 2) { err.textContent = 'Enter a name.'; return; }
+  if (!/^[\p{L}\p{M}'\- ]+$/u.test(name)) { err.textContent = 'Letters only.'; return; }
+  if (setupTempRiders.some(r => r.name.toLowerCase() === name.toLowerCase())) { err.textContent = 'Already added.'; return; }
+  setupTempRiders.push({ name, clr: setupSelectedClr });
+  nameEl.value = '';
+  // pick next unused color
+  const used = setupTempRiders.map(r => r.clr);
+  setupSelectedClr = COLORS.find(c => !used.includes(c)) || COLORS[0];
+  renderSetupColorGrid();
+  renderSetupRiderList();
+  updateSetupFinishBtn();
+  nameEl.focus();
+}
+
+// Allow Enter key in setup rider input
+document.getElementById('setupRiderName').addEventListener('keydown', e => { if (e.key === 'Enter') setupAddRider(); });
+document.getElementById('setupAdminName').addEventListener('keydown', e => { if (e.key === 'Enter') setupStep1Next(); });
+
+function updateSetupFinishBtn() {
+  const btn = document.getElementById('setupFinishBtn');
+  if (setupTempRiders.length > 0) {
+    btn.style.opacity = '1'; btn.style.pointerEvents = 'auto';
+  } else {
+    btn.style.opacity = '0.4'; btn.style.pointerEvents = 'none';
+  }
+}
+
+function setupFinish() {
+  if (!setupTempRiders.length) return;
+  RIDERS = setupTempRiders;
+  activeFilter = null; // show all by default
+  saveRiders(); saveFilter();
+  markSetupDone();
+  hideSetupWizard();
+  renderRiders(); updateStats(); renderFilterBar();
+  showToast('🎉 Welcome ' + adminName + '! Raax is ready.');
+}
+
+// ── FILTER ────────────────────────────────────────────────────
+function toggleFilter() {
+  const bar = document.getElementById('filterBar');
+  const open = bar.style.display === 'flex';
+  bar.style.display = open ? 'none' : 'flex';
+  if (!open) renderFilterBar();
+}
+
+function renderFilterBar() {
+  const bar = document.getElementById('filterBar');
+  if (!bar) return;
+  bar.innerHTML = RIDERS.map(r => {
+    const on = !activeFilter || activeFilter.includes(r.name);
+    return `<button onclick="toggleRiderFilter('${esc(r.name)}')"
+      style="display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:20px;border:2px solid ${on ? r.clr : 'var(--border)'};background:${on ? r.clr+'22' : 'var(--card)'};color:${on ? r.clr : 'var(--muted)'};font-family:Nunito,sans-serif;font-size:12px;font-weight:800;cursor:pointer;transition:all .15s;">
+      <span style="width:8px;height:8px;border-radius:50%;background:${on ? r.clr : 'var(--border)'}"></span>${esc(r.name)}
+    </button>`;
+  }).join('') +
+  `<button onclick="filterAll()" style="padding:6px 12px;border-radius:20px;border:2px solid var(--border);background:var(--card);color:var(--muted);font-family:Nunito,sans-serif;font-size:12px;font-weight:800;cursor:pointer;">All</button>`;
+}
+
+function toggleRiderFilter(name) {
+  if (!activeFilter) activeFilter = RIDERS.map(r => r.name); // start with all
+  const idx = activeFilter.indexOf(name);
+  if (idx >= 0) activeFilter.splice(idx, 1);
+  else activeFilter.push(name);
+  if (activeFilter.length === RIDERS.length) activeFilter = null; // all = no filter
+  saveFilter(); renderFilterBar(); renderRiders(); updateStats();
+}
+
+function filterAll() {
+  activeFilter = null;
+  saveFilter(); renderFilterBar(); renderRiders(); updateStats();
+}
 
 // ── PIN AUTH ──────────────────────────────────────────────────
 // PBKDF2-based PIN hashing — strong, one-way, salted
@@ -601,7 +863,12 @@ async function handlePinComplete() {
       setSession();
       setTimeout(() => {
         document.getElementById('pinWrap').classList.remove('show');
-        showToast('✅ PIN set! Welcome to Raax 🚗');
+        // First time — show setup wizard
+        if (!isSetupDone()) {
+          showSetupWizard();
+        } else {
+          showToast('✅ PIN set! Welcome back 🚗');
+        }
       }, 300);
     } else {
       flashDots('error');
@@ -670,7 +937,11 @@ async function doChangePin() {
 document.getElementById('cpModal').addEventListener('click', function(e) { if (e.target === this) closeCpModal(); });
 
 function getDay(date) {
-  if (!entries[date]) { entries[date]={}; RIDERS.forEach(r=>{ entries[date][r.name]={mP:'',mPaid:'',eP:'',ePaid:''}; }); }
+  if (!entries[date]) entries[date] = {};
+  // Always ensure ALL current riders exist in this day's entry
+  RIDERS.forEach(r => {
+    if (!entries[date][r.name]) entries[date][r.name] = {mP:'',mPaid:'',eP:'',ePaid:''};
+  });
   return entries[date];
 }
 
@@ -701,6 +972,10 @@ function updateStats() {
   document.getElementById('qsC').textContent='₹'+tc;
   document.getElementById('qsP').textContent='₹'+tp;
   document.getElementById('qsT').textContent=tt;
+  // update header to show admin name
+  const hdr = document.getElementById('hdrDate');
+  const dateStr = new Date().toLocaleDateString('en-IN',{weekday:'short',day:'numeric',month:'short'});
+  hdr.textContent = adminName ? adminName + ' · ' + dateStr : dateStr;
 }
 
 // ── SECURITY: HTML escape for all user-controlled strings in innerHTML ──
@@ -733,7 +1008,14 @@ function renderRiders() {
   const con  = document.getElementById('ridersContainer');
   con.innerHTML = '';
 
-  RIDERS.forEach(rider => {
+  const shown = visibleRiders();
+
+  if (shown.length === 0) {
+    con.innerHTML = '<div class="hempty"><div class="big">👥</div>No riders to show.<br>Add riders in Settings or adjust filter.</div>';
+    return;
+  }
+
+  shown.forEach(rider => {
     const d = day[rider.name];
     const s = calcR(rider.name);
     const hasAny  = d.mP || d.eP;
@@ -1043,9 +1325,14 @@ function goTo(name){
   document.querySelectorAll('.nb').forEach(b=>b.classList.remove('active'));
   document.getElementById('screen-'+name).classList.add('active');
   document.getElementById('nav-'+name).classList.add('active');
-  if(name==='history') renderHistory();
-  if(name==='summary') renderSummary();
-  if(name==='settings') renderRidersList();
+  if(name==='history')  renderHistory();
+  if(name==='summary')  renderSummary();
+  if(name==='settings') {
+    renderRidersList();
+    renderLastUpdated();
+    const fi = document.getElementById('fareInput');
+    if (fi) fi.value = FARE;
+  }
 }
 function clearAll(){
   showConfirm('🗑️ Delete ALL data?', 'This cannot be undone.', () => {
@@ -1461,15 +1748,87 @@ function unzipToMap(bytes) {
   }
   return files;
 }
-window.addEventListener('DOMContentLoaded',()=>{
-  document.getElementById('logDate').value=todayStr();
-  document.getElementById('hdrDate').textContent=new Date().toLocaleDateString('en-IN',{weekday:'short',day:'numeric',month:'short',year:'numeric'});
-  renderRiders(); updateStats();
 
-  // PIN auth check
-  if (!isLoggedIn()) showPinScreen(!getPin());
+// ── HAPTIC ENGINE ─────────────────────────────────────────────
+function haptic(type = 'light') {
+  if (navigator.vibrate) {
+    const patterns = { light:[10], medium:[20], heavy:[40,10,40], success:[10,50,10], error:[30,20,60] };
+    navigator.vibrate(patterns[type] || [10]);
+  }
+}
+// Fire light haptic on every button/interactive tap
+document.addEventListener('touchstart', e => {
+  if (e.target.closest('button,.tb,.nb,.srow,.hcard,.pk,.color-swatch,[onclick]')) haptic('light');
+}, { passive: true });
 
-  if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(()=>{});
+// ── PULL TO REFRESH ───────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', () => {
+  const content   = document.querySelector('.content');
+  const indicator = document.getElementById('ptrIndicator');
+  const spinner   = document.getElementById('ptrSpinner');
+  const label     = document.getElementById('ptrLabel');
+  const THRESHOLD = 72, MAX_PULL = 110;
+  let startY = 0, pulling = false, triggered = false;
+
+  content.addEventListener('touchstart', e => {
+    if (content.scrollTop > 0) return;
+    startY = e.touches[0].clientY; pulling = false; triggered = false;
+  }, { passive: true });
+
+  content.addEventListener('touchmove', e => {
+    const dy = e.touches[0].clientY - startY;
+    if (dy <= 0 || content.scrollTop > 0) { if (!pulling) return; }
+    pulling = true;
+    const pull = Math.min(dy * 0.45, MAX_PULL);
+    indicator.classList.add('visible');
+    indicator.style.transform = `translateX(-50%) translateY(${pull - 52}px)`;
+    spinner.style.transform   = `rotate(${(pull / MAX_PULL) * 180}deg)`;
+    if (pull >= THRESHOLD && !triggered) {
+      triggered = true; label.textContent = 'Release to refresh'; spinner.textContent = '↻'; haptic('medium');
+    } else if (pull < THRESHOLD && triggered) {
+      triggered = false; label.textContent = 'Pull to refresh'; spinner.textContent = '↓';
+    }
+  }, { passive: true });
+
+  content.addEventListener('touchend', () => {
+    if (!pulling) return;
+    pulling = false;
+    if (triggered) {
+      indicator.style.transform = `translateX(-50%) translateY(14px)`;
+      spinner.classList.add('spinning'); label.textContent = 'Refreshing…'; haptic('success');
+      setTimeout(() => {
+        const id = (document.querySelector('.screen.active') || {}).id || '';
+        if (id === 'screen-log')      { renderRiders(); updateStats(); }
+        if (id === 'screen-history')  { renderHistory(); }
+        if (id === 'screen-summary')  { renderSummary(); }
+        if (id === 'screen-settings') { renderRidersList(); renderLastUpdated(); }
+        showToast('✅ Refreshed');
+        spinner.classList.remove('spinning');
+        indicator.classList.remove('visible');
+        indicator.style.transform = `translateX(-50%) translateY(-60px)`;
+        triggered = false;
+      }, 700);
+    } else {
+      indicator.classList.remove('visible');
+      indicator.style.transform = `translateX(-50%) translateY(-60px)`;
+    }
+  }, { passive: true });
+});
+
+window.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('logDate').value = todayStr();
+  renderRiders(); updateStats(); renderFilterBar();
+
+  // Auth / setup flow
+  if (!getPin()) {
+    showPinScreen(true);
+  } else if (!isSetupDone()) {
+    showSetupWizard();
+  } else if (!isLoggedIn()) {
+    showPinScreen(false);
+  }
+
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 });
 </script>
 </body>
