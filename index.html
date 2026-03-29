@@ -368,6 +368,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
     <div class="qs"><div class="qv" id="qsP" style="color:var(--red)">₹0</div><div class="ql">Pending</div></div>
     <div class="qs"><div class="qv" id="qsT" style="color:var(--blue)">0</div><div class="ql">Trips</div></div>
   </div>
+  <div style="text-align:center;font-size:10px;font-weight:800;color:var(--muted);padding:4px 0;background:var(--card);border-bottom:1px solid var(--border);letter-spacing:.5px;text-transform:uppercase;" id="qsMonthLabel"></div>
 
   <div class="content">
 
@@ -402,8 +403,34 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 
     <!-- SUMMARY -->
     <div id="screen-summary" class="screen">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;background:var(--surface);border:1.5px solid var(--border);border-radius:var(--r);padding:10px 14px;">
+        <span style="font-size:13px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;">Month</span>
+        <input type="month" id="summaryMonth" style="flex:1;background:var(--card);border:1px solid var(--border);color:var(--text);padding:7px 10px;border-radius:8px;font-family:'JetBrains Mono',monospace;font-size:13px;" onchange="renderSummary()">
+        <button onclick="setSummaryMonthToday()" style="background:var(--accent);border:none;color:#fff;border-radius:8px;padding:7px 12px;font-family:Nunito,sans-serif;font-size:12px;font-weight:800;cursor:pointer;">This Month</button>
+      </div>
       <div id="summaryContainer"></div>
-      <button class="cbtn" onclick="clearAll()">🗑️ Clear All Data</button>
+    </div>
+
+    <!-- FUEL -->
+    <div id="screen-fuel" class="screen">
+      <div class="sl" style="display:flex;align-items:center;justify-content:space-between;">
+        <span>⛽ Fuel Log</span>
+        <button onclick="openFuelModal()" style="background:var(--accent);border:none;color:#fff;border-radius:8px;padding:6px 14px;font-family:Nunito,sans-serif;font-size:12px;font-weight:800;cursor:pointer;box-shadow:0 2px 10px rgba(168,85,247,.4);">＋ Add</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;background:var(--surface);border:1.5px solid var(--border);border-radius:var(--r);padding:10px 14px;">
+        <span style="font-size:13px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;">Month</span>
+        <input type="month" id="fuelMonth" style="flex:1;background:var(--card);border:1px solid var(--border);color:var(--text);padding:7px 10px;border-radius:8px;font-family:'JetBrains Mono',monospace;font-size:13px;" onchange="renderFuel()">
+        <button onclick="setFuelMonthToday()" style="background:var(--accent);border:none;color:#fff;border-radius:8px;padding:7px 12px;font-family:Nunito,sans-serif;font-size:12px;font-weight:800;cursor:pointer;">This Month</button>
+      </div>
+      <!-- Fuel month summary hero -->
+      <div id="fuelHero" style="background:var(--surface);border:1.5px solid var(--border);border-radius:var(--r);padding:18px 20px;margin-bottom:14px;display:none;">
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;text-align:center;">
+          <div><div id="fhTotal" style="font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:700;color:var(--accent)">₹0</div><div style="font-size:10px;color:var(--muted);font-weight:800;text-transform:uppercase;letter-spacing:.7px;margin-top:2px">Spent</div></div>
+          <div><div id="fhLitres" style="font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:700;color:var(--blue)">0L</div><div style="font-size:10px;color:var(--muted);font-weight:800;text-transform:uppercase;letter-spacing:.7px;margin-top:2px">Litres</div></div>
+          <div><div id="fhFills" style="font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:700;color:var(--green)">0</div><div style="font-size:10px;color:var(--muted);font-weight:800;text-transform:uppercase;letter-spacing:.7px;margin-top:2px">Fill-ups</div></div>
+        </div>
+      </div>
+      <div id="fuelContainer"></div>
     </div>
 
     <!-- SETTINGS -->
@@ -492,6 +519,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
     <button class="nb active" id="nav-log" onclick="goTo('log')"><span class="ni">📋</span>Log</button>
     <button class="nb" id="nav-history" onclick="goTo('history')"><span class="ni">📊</span>History</button>
     <button class="nb" id="nav-summary" onclick="goTo('summary')"><span class="ni">💰</span>Summary</button>
+    <button class="nb" id="nav-fuel" onclick="goTo('fuel')"><span class="ni">⛽</span>Fuel</button>
     <button class="nb" id="nav-settings" onclick="goTo('settings')"><span class="ni">⚙️</span>Settings</button>
   </div>
 </div>
@@ -538,6 +566,44 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
   </div>
 </div>
 
+<!-- ── FUEL MODAL ── -->
+<div class="mbg" id="fuelModal">
+  <div class="modal">
+    <div class="mtl" id="fuelModalTitle">⛽ Add Fill-up</div>
+    <div class="fin">
+      <label>Date</label>
+      <input type="date" id="fuelDate" style="background:var(--card);border:1.5px solid var(--border);color:var(--text);border-radius:10px;padding:10px 12px;font-family:'JetBrains Mono',monospace;font-size:14px;width:100%;">
+    </div>
+    <div class="fin">
+      <label>Litres filled</label>
+      <input type="number" id="fuelLitres" placeholder="e.g. 20.5" min="0.1" max="200" step="0.1" inputmode="decimal" style="background:var(--card);border:1.5px solid var(--border);color:var(--text);border-radius:10px;padding:10px 12px;font-family:'JetBrains Mono',monospace;font-size:14px;width:100%;">
+    </div>
+    <div class="fin">
+      <label>Amount paid (₹)</label>
+      <input type="number" id="fuelAmount" placeholder="e.g. 2100" min="1" max="99999" inputmode="numeric" style="background:var(--card);border:1.5px solid var(--border);color:var(--text);border-radius:10px;padding:10px 12px;font-family:'JetBrains Mono',monospace;font-size:14px;width:100%;">
+    </div>
+    <div class="fin">
+      <label>Note (optional)</label>
+      <input type="text" id="fuelNote" placeholder="e.g. HP Petrol station" maxlength="50" style="background:var(--card);border:1.5px solid var(--border);color:var(--text);border-radius:10px;padding:10px 12px;font-family:Nunito,sans-serif;font-size:14px;width:100%;">
+    </div>
+    <div class="login-err" id="fuelErr"></div>
+    <button class="login-btn" onclick="saveFuelEntry()" style="margin-top:8px">Save Fill-up</button>
+    <button class="mbtn danger-row" id="fuelDeleteBtn" style="display:none;margin-top:8px;justify-content:center;color:var(--red);border-color:rgba(248,81,73,.3);" onclick="deleteFuelEntry()">
+      <span class="mi">🗑️</span> Delete Entry
+    </button>
+    <button class="mcancel" onclick="closeFuelModal()">Cancel</button>
+  </div>
+</div>
+
+<!-- ── RIDER PENDING DETAIL MODAL ── -->
+<div class="mbg" id="riderPendingModal">
+  <div class="modal" style="max-height:80vh;overflow-y:auto;">
+    <div class="mtl" id="riderPendingTitle">Pending Details</div>
+    <div id="riderPendingBody"></div>
+    <button class="mcancel" onclick="closeRiderPending()">Close</button>
+  </div>
+</div>
+
 <!-- ── CONFIRM MODAL ── -->
 <div class="mbg" id="confirmModal">
   <div class="modal" style="padding:24px">
@@ -553,6 +619,10 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
     <div class="fin">
       <label>Name</label>
       <input type="text" id="riderNameInput" placeholder="Enter rider name" autocapitalize="words" maxlength="20">
+    </div>
+    <div class="fin">
+      <label>Fare per ride (₹) <span style="color:var(--muted);font-weight:600;font-size:11px;">— leave blank to use default</span></label>
+      <input type="number" id="riderFareInput" placeholder="e.g. 75" min="1" max="9999" inputmode="numeric" style="background:var(--card);border:1.5px solid var(--border);color:var(--text);border-radius:10px;padding:10px 12px;font-family:'JetBrains Mono',monospace;font-size:14px;width:100%;">
     </div>
     <div class="fin">
       <label>Colour</label>
@@ -946,36 +1016,52 @@ function getDay(date) {
 }
 
 // ── STATS ─────────────────────────────────────────────────────
-function calcR(name) {
-  let pR=0,uR=0;
-  Object.values(entries).forEach(day=>{
+// Get fare for a rider (custom or default)
+function riderFare(name) {
+  const r = RIDERS.find(x => x.name === name);
+  return (r && r.fare) ? r.fare : FARE;
+}
+
+function calcR(name, monthFilter) {
+  let pR=0,uR=0,pendingDates=[];
+  const fare = riderFare(name);
+  Object.entries(entries).forEach(([date, day])=>{
+    if (monthFilter && !date.startsWith(monthFilter)) return;
     const d=day[name]; if(!d) return;
-    if(d.mP==='P'&&d.mPaid==='Y')pR++; if(d.eP==='P'&&d.ePaid==='Y')pR++;
-    if(d.mP==='P'&&d.mPaid==='N')uR++; if(d.eP==='P'&&d.ePaid==='N')uR++;
+    if(d.mP==='P'&&d.mPaid==='Y')pR++;
+    if(d.eP==='P'&&d.ePaid==='Y')pR++;
+    if(d.mP==='P'&&d.mPaid==='N'){ uR++; pendingDates.push({date, slot:'Morning'}); }
+    if(d.eP==='P'&&d.ePaid==='N'){ uR++; pendingDates.push({date, slot:'Evening'}); }
   });
-  return {pR,uR,paid:pR*FARE,pending:uR*FARE};
+  return {pR,uR,paid:pR*fare,pending:uR*fare,pendingDates,fare};
 }
 function calcDay(day) {
   let paid=0,pending=0;
-  RIDERS.forEach(r=>{ const d=day[r.name]||{};
-    if(d.mP==='P'&&d.mPaid==='Y')paid+=FARE; if(d.eP==='P'&&d.ePaid==='Y')paid+=FARE;
-    if(d.mP==='P'&&d.mPaid==='N')pending+=FARE; if(d.eP==='P'&&d.ePaid==='N')pending+=FARE;
+  RIDERS.forEach(r=>{ const d=day[r.name]||{}; const fare=riderFare(r.name);
+    if(d.mP==='P'&&d.mPaid==='Y')paid+=fare; if(d.eP==='P'&&d.ePaid==='Y')paid+=fare;
+    if(d.mP==='P'&&d.mPaid==='N')pending+=fare; if(d.eP==='P'&&d.ePaid==='N')pending+=fare;
   });
   return {paid,pending};
 }
 function updateStats() {
+  // Stats bar: current month only
+  const mo = new Date().toISOString().slice(0,7);
   let tc=0,tp=0,tt=0;
-  Object.values(entries).forEach(day=>{
+  Object.entries(entries).forEach(([date,day])=>{
+    if (!date.startsWith(mo)) return;
     const t=calcDay(day); tc+=t.paid; tp+=t.pending;
     RIDERS.forEach(r=>{ const d=day[r.name]||{}; if(d.mP==='P')tt++; if(d.eP==='P')tt++; });
   });
   document.getElementById('qsC').textContent='₹'+tc;
   document.getElementById('qsP').textContent='₹'+tp;
   document.getElementById('qsT').textContent=tt;
-  // update header to show admin name
+  // update header label
   const hdr = document.getElementById('hdrDate');
   const dateStr = new Date().toLocaleDateString('en-IN',{weekday:'short',day:'numeric',month:'short'});
   hdr.textContent = adminName ? adminName + ' · ' + dateStr : dateStr;
+  // update qs-bar label
+  const lbl = document.getElementById('qsMonthLabel');
+  if (lbl) lbl.textContent = new Date().toLocaleDateString('en-IN',{month:'long',year:'numeric'});
 }
 
 // ── SECURITY: HTML escape for all user-controlled strings in innerHTML ──
@@ -1163,29 +1249,83 @@ function renderHistory(){
 }
 
 // ── SUMMARY ───────────────────────────────────────────────────
+function currentSummaryMonth() {
+  const el = document.getElementById('summaryMonth');
+  return el ? el.value : new Date().toISOString().slice(0,7);
+}
+function setSummaryMonthToday() {
+  const el = document.getElementById('summaryMonth');
+  if (el) { el.value = new Date().toISOString().slice(0,7); renderSummary(); }
+}
+
 function renderSummary(){
-  let g=0,gp=0;
-  RIDERS.forEach(r=>{const s=calcR(r.name);g+=s.paid;gp+=s.pending;});
-  const cards=RIDERS.map(r=>{
-    const s=calcR(r.name); const img=photos[r.name];
-    return `<div class="rsc">
+  const mo = currentSummaryMonth();
+  let g=0,gp=0,gt=0;
+  RIDERS.forEach(r=>{ const s=calcR(r.name,mo); g+=s.paid; gp+=s.pending; gt+=s.pR+s.uR; });
+
+  // Fuel total for the month
+  const fuelEntries = JSON.parse(localStorage.getItem('rsPWA_fuel')||'[]');
+  const fuelMonthTotal = fuelEntries.filter(f=>f.date.startsWith(mo)).reduce((s,f)=>s+f.amount,0);
+  const fuelMonthLitres = fuelEntries.filter(f=>f.date.startsWith(mo)).reduce((s,f)=>s+f.litres,0);
+
+  const moLabel = mo ? new Date(mo+'-01').toLocaleDateString('en-IN',{month:'long',year:'numeric'}) : 'All Time';
+
+  const cards = RIDERS.map(r=>{
+    const s=calcR(r.name,mo); const img=photos[r.name];
+    const fareLabel = r.fare ? `₹${r.fare}/ride` : `₹${FARE}/ride (default)`;
+    return `<div class="rsc" data-rider="${esc(r.name)}" style="cursor:${s.pending>0?'pointer':'default'};" onclick="openRiderPending('${esc(r.name)}','${mo}')">
       <div class="rsav" style="background:${img?'#1c1530':r.clr}">${img?`<img src="${img}" alt="${esc(r.name)}">`:`${esc(r.name[0])}`}</div>
-      <div class="rsin"><div class="rsnm">${esc(r.name)}</div><div class="rsrd">${s.pR} paid · ${s.uR} unpaid · ${s.pR+s.uR} rides</div></div>
+      <div class="rsin">
+        <div class="rsnm">${esc(r.name)}</div>
+        <div class="rsrd">${s.pR} paid · ${s.uR} unpaid · ${fareLabel}</div>
+      </div>
       <div class="rsrt">
         <div class="rspd">₹${s.paid}</div>
-        ${s.pending>0?`<div class="rsdu">₹${s.pending} due</div>`:`<div class="rsdu" style="color:var(--green)">All clear ✓</div>`}
+        ${s.pending>0
+          ? `<div class="rsdu" style="display:flex;align-items:center;gap:3px;">₹${s.pending} due <span style="font-size:9px;background:rgba(248,81,73,.2);border-radius:4px;padding:1px 4px;">tap</span></div>`
+          : `<div class="rsdu" style="color:var(--green)">All clear ✓</div>`}
       </div>
     </div>`;
   }).join('');
+
   document.getElementById('summaryContainer').innerHTML=`
     <div class="shero">
-      <div class="shv">₹${g}</div><div class="shl">Total Collected</div>
+      <div style="font-size:11px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">${moLabel}</div>
+      <div class="shv">₹${g}</div><div class="shl">Collected</div>
       <div class="shsub">
         <div class="shsi"><div class="shsv" style="color:var(--red)">₹${gp}</div><div class="shsl">Pending</div></div>
-        <div class="shsi"><div class="shsv" style="color:var(--blue)">${Object.keys(entries).length}</div><div class="shsl">Days</div></div>
+        <div class="shsi"><div class="shsv" style="color:var(--blue)">${gt}</div><div class="shsl">Trips</div></div>
+        ${fuelMonthTotal>0?`<div class="shsi"><div class="shsv" style="color:#fbbf24">₹${fuelMonthTotal}</div><div class="shsl">Fuel</div></div>`:''}
       </div>
     </div>
-    <div class="sl">Per Rider</div>${cards}`;
+    <div class="sl">Per Rider — tap to see pending dates</div>${cards}`;
+}
+
+// ── RIDER PENDING DETAIL ──────────────────────────────────────
+function openRiderPending(name, mo) {
+  const s = calcR(name, mo || currentSummaryMonth());
+  if (!s.pendingDates.length) { showToast('✅ ' + name + ' has no pending dues!'); return; }
+  const rider = RIDERS.find(r=>r.name===name);
+  const fare = riderFare(name);
+  document.getElementById('riderPendingTitle').textContent = '⏳ ' + name + ' — Pending';
+  document.getElementById('riderPendingBody').innerHTML =
+    `<div style="font-size:12px;color:var(--muted);font-weight:700;margin-bottom:12px;text-align:center;">₹${s.pending} total pending (${s.uR} rides × ₹${fare})</div>` +
+    s.pendingDates.map(p=>`
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
+        <div>
+          <div style="font-size:13px;font-weight:800;">${formatDate(p.date)}</div>
+          <div style="font-size:11px;color:var(--muted);">${p.slot} ride</div>
+        </div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;color:var(--red);">₹${fare}</div>
+      </div>`
+    ).join('') +
+    `<div style="display:flex;justify-content:space-between;padding:12px 0;font-weight:900;font-size:14px;">
+      <span>Total</span><span style="color:var(--red);font-family:'JetBrains Mono',monospace;">₹${s.pending}</span>
+    </div>`;
+  document.getElementById('riderPendingModal').classList.add('open');
+}
+function closeRiderPending() {
+  document.getElementById('riderPendingModal').classList.remove('open');
 }
 
 // ── RIDER MANAGEMENT ─────────────────────────────────────────
@@ -1216,6 +1356,7 @@ function openRiderModal(idx){
   const isNew = idx === null;
   document.getElementById('riderModalTitle').textContent = isNew ? 'Add Rider' : 'Edit Rider';
   document.getElementById('riderNameInput').value = isNew ? '' : RIDERS[idx].name;
+  document.getElementById('riderFareInput').value = isNew ? '' : (RIDERS[idx].fare || '');
   document.getElementById('riderErr').textContent = '';
   document.getElementById('riderDeleteBtn').style.display = isNew ? 'none' : 'flex';
   selectedColor = isNew ? COLORS[0] : RIDERS[idx].clr;
@@ -1265,11 +1406,14 @@ function saveRider(){
   if (duplicate){ errEl.textContent = 'A rider with this name already exists.'; return; }
 
   if (isNew) {
-    RIDERS.push({ name, clr: selectedColor });
+    const fareVal = parseInt(document.getElementById('riderFareInput').value);
+    const riderObj = { name, clr: selectedColor };
+    if (fareVal && fareVal >= 1 && fareVal <= 9999) riderObj.fare = fareVal;
+    RIDERS.push(riderObj);
     showToast('✅ '+name+' added!');
   } else {
     const oldName = RIDERS[editingRiderIdx].name;
-    // Rename entries & photos if name changed
+    const fareVal = parseInt(document.getElementById('riderFareInput').value);
     if (oldName !== name) {
       Object.values(entries).forEach(day => {
         if (day[oldName]) { day[name] = day[oldName]; delete day[oldName]; }
@@ -1278,6 +1422,7 @@ function saveRider(){
       save(); saveP();
     }
     RIDERS[editingRiderIdx] = { name, clr: selectedColor };
+    if (fareVal && fareVal >= 1 && fareVal <= 9999) RIDERS[editingRiderIdx].fare = fareVal;
     showToast('✅ '+name+' updated!');
   }
 
@@ -1327,6 +1472,7 @@ function goTo(name){
   document.getElementById('nav-'+name).classList.add('active');
   if(name==='history')  renderHistory();
   if(name==='summary')  renderSummary();
+  if(name==='fuel')     renderFuel();
   if(name==='settings') {
     renderRidersList();
     renderLastUpdated();
@@ -1335,8 +1481,11 @@ function goTo(name){
   }
 }
 function clearAll(){
-  showConfirm('🗑️ Delete ALL data?', 'This cannot be undone.', () => {
-    entries={};save();renderRiders();updateStats();showToast('🗑️ All data cleared');
+  showConfirm('🗑️ Delete ALL data?', 'This cannot be undone. Trip logs and fuel entries will be deleted.', () => {
+    entries={}; save();
+    fuelEntries=[]; saveFuel();
+    renderRiders(); updateStats(); renderFuel();
+    showToast('🗑️ All data cleared');
   });
 }
 
@@ -1348,6 +1497,126 @@ function showToast(msg){
 }
 function formatDate(str){
   return new Date(str+'T00:00:00').toLocaleDateString('en-IN',{weekday:'short',day:'numeric',month:'short'});
+}
+
+// ── FUEL LOG ──────────────────────────────────────────────────
+let fuelEntries    = JSON.parse(localStorage.getItem('rsPWA_fuel') || '[]');
+let editingFuelIdx = null;
+
+function saveFuel() { localStorage.setItem('rsPWA_fuel', JSON.stringify(fuelEntries)); }
+
+function currentFuelMonth() {
+  const el = document.getElementById('fuelMonth');
+  return el ? el.value : new Date().toISOString().slice(0,7);
+}
+function setFuelMonthToday() {
+  const el = document.getElementById('fuelMonth');
+  if (el) { el.value = new Date().toISOString().slice(0,7); renderFuel(); }
+}
+
+function openFuelModal(idx) {
+  editingFuelIdx = (idx !== undefined) ? idx : null;
+  const isNew = editingFuelIdx === null;
+  document.getElementById('fuelModalTitle').textContent = isNew ? '⛽ Add Fill-up' : '⛽ Edit Fill-up';
+  document.getElementById('fuelDeleteBtn').style.display = isNew ? 'none' : 'flex';
+  document.getElementById('fuelErr').textContent = '';
+  if (isNew) {
+    document.getElementById('fuelDate').value   = currentFuelMonth() ? currentFuelMonth()+'-'+new Date().toISOString().slice(8,10) : todayStr();
+    document.getElementById('fuelLitres').value  = '';
+    document.getElementById('fuelAmount').value  = '';
+    document.getElementById('fuelNote').value    = '';
+  } else {
+    const f = fuelEntries[idx];
+    document.getElementById('fuelDate').value   = f.date;
+    document.getElementById('fuelLitres').value  = f.litres;
+    document.getElementById('fuelAmount').value  = f.amount;
+    document.getElementById('fuelNote').value    = f.note || '';
+  }
+  document.getElementById('fuelModal').classList.add('open');
+}
+function closeFuelModal() {
+  document.getElementById('fuelModal').classList.remove('open');
+  editingFuelIdx = null;
+}
+
+function saveFuelEntry() {
+  const date    = document.getElementById('fuelDate').value;
+  const litres  = parseFloat(document.getElementById('fuelLitres').value);
+  const amount  = parseInt(document.getElementById('fuelAmount').value);
+  const note    = document.getElementById('fuelNote').value.trim().slice(0,50);
+  const err     = document.getElementById('fuelErr');
+  err.textContent = '';
+  if (!date)                    { err.textContent = 'Select a date.'; return; }
+  if (!litres || litres <= 0)   { err.textContent = 'Enter litres.'; return; }
+  if (!amount || amount <= 0)   { err.textContent = 'Enter amount paid.'; return; }
+
+  const entry = { date, litres, amount, note };
+  if (editingFuelIdx === null) {
+    fuelEntries.push(entry);
+    showToast('⛽ Fill-up added!');
+  } else {
+    fuelEntries[editingFuelIdx] = entry;
+    showToast('⛽ Fill-up updated!');
+  }
+  // Sort by date descending
+  fuelEntries.sort((a,b) => b.date.localeCompare(a.date));
+  saveFuel();
+  closeFuelModal();
+  renderFuel();
+  // refresh summary if open
+  if (document.getElementById('screen-summary').classList.contains('active')) renderSummary();
+}
+
+function deleteFuelEntry() {
+  if (editingFuelIdx === null) return;
+  showConfirm('Delete this fill-up?', 'This cannot be undone.', () => {
+    fuelEntries.splice(editingFuelIdx, 1);
+    saveFuel(); closeFuelModal(); renderFuel();
+    if (document.getElementById('screen-summary').classList.contains('active')) renderSummary();
+    showToast('🗑️ Fill-up deleted');
+  });
+}
+
+function renderFuel() {
+  const mo  = currentFuelMonth();
+  const con = document.getElementById('fuelContainer');
+  const hero = document.getElementById('fuelHero');
+  const filtered = mo ? fuelEntries.filter(f => f.date.startsWith(mo)) : [...fuelEntries];
+
+  // Hero totals
+  if (filtered.length) {
+    const total  = filtered.reduce((s,f)=>s+f.amount,0);
+    const litres = filtered.reduce((s,f)=>s+f.litres,0);
+    document.getElementById('fhTotal').textContent  = '₹'+total;
+    document.getElementById('fhLitres').textContent = litres.toFixed(1)+'L';
+    document.getElementById('fhFills').textContent  = filtered.length;
+    hero.style.display = 'block';
+  } else {
+    hero.style.display = 'none';
+  }
+
+  if (!filtered.length) {
+    con.innerHTML = `<div class="hempty"><div class="big">⛽</div>No fill-ups logged${mo?' for this month':''}.<br>Tap ＋ Add to record one.</div>`;
+    return;
+  }
+
+  // per-litre rate for each entry
+  con.innerHTML = filtered.map((f, i) => {
+    const realIdx = fuelEntries.indexOf(f);
+    const rate = (f.amount / f.litres).toFixed(1);
+    return `<div class="hcard" style="margin-bottom:10px;">
+      <div class="hhdr" style="cursor:pointer;" onclick="openFuelModal(${realIdx})">
+        <div>
+          <div class="hdate">${formatDate(f.date)}</div>
+          ${f.note ? `<div style="font-size:11px;color:var(--muted);margin-top:2px;">${esc(f.note)}</div>` : ''}
+        </div>
+        <div style="text-align:right;">
+          <div style="font-family:'JetBrains Mono',monospace;font-size:15px;font-weight:700;color:var(--accent);">₹${f.amount}</div>
+          <div style="font-size:11px;color:var(--muted);">${f.litres}L · ₹${rate}/L</div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 // ── INSTALL ───────────────────────────────────────────────────
@@ -1412,44 +1681,45 @@ function dismissInstall() {
 // ── EXPORT ────────────────────────────────────────────────────
 function exportExcel() {
   const dates = Object.keys(entries).sort();
-  if (!dates.length) { showToast('⚠️ No data to export'); return; }
+  if (!dates.length && !fuelEntries.length) { showToast('⚠️ No data to export'); return; }
 
-  // Build rows: Date | Rider | Morning Present | Morning Paid | Evening Present | Evening Paid | Total Fare
   const rows = [];
-  rows.push(['Date', 'Rider', 'Morning Present', 'Morning Paid', 'Evening Present', 'Evening Paid', 'Fare (₹)']);
-
+  rows.push(['Date', 'Rider', 'Fare (₹)', 'Morning Present', 'Morning Paid', 'Evening Present', 'Evening Paid', 'Trip Total (₹)']);
   dates.forEach(date => {
     const day = entries[date];
     RIDERS.forEach(r => {
       const d = day[r.name] || {};
-      if (!d.mP && !d.eP) return; // skip empty rows
-      const fare = ((d.mP==='P'&&d.mPaid==='Y'?1:0) + (d.eP==='P'&&d.ePaid==='Y'?1:0)) * FARE;
+      if (!d.mP && !d.eP) return;
+      const fare = riderFare(r.name);
+      const tripTotal = ((d.mP==='P'&&d.mPaid==='Y'?1:0) + (d.eP==='P'&&d.ePaid==='Y'?1:0)) * fare;
       rows.push([
-        date,
-        r.name,
-        d.mP === 'P' ? 'Present' : d.mP === 'A' ? 'Absent' : '',
-        d.mP === 'P' ? (d.mPaid === 'Y' ? 'Paid' : d.mPaid === 'N' ? 'Pending' : '') : '',
-        d.eP === 'P' ? 'Present' : d.eP === 'A' ? 'Absent' : '',
-        d.eP === 'P' ? (d.ePaid === 'Y' ? 'Paid' : d.ePaid === 'N' ? 'Pending' : '') : '',
-        fare
+        date, r.name, fare,
+        d.mP==='P'?'Present':d.mP==='A'?'Absent':'',
+        d.mP==='P'?(d.mPaid==='Y'?'Paid':d.mPaid==='N'?'Pending':''):'',
+        d.eP==='P'?'Present':d.eP==='A'?'Absent':'',
+        d.eP==='P'?(d.ePaid==='Y'?'Paid':d.ePaid==='N'?'Pending':''):'',
+        tripTotal
       ]);
     });
   });
 
-  // Add summary sheet rows
-  const summaryRows = [];
-  summaryRows.push(['Rider', 'Total Rides', 'Paid Rides', 'Pending Rides', 'Amount Collected (₹)', 'Amount Pending (₹)']);
+  const summaryRows = [['Rider', 'Custom Fare (₹)', 'Default Fare (₹)', 'Total Rides', 'Paid Rides', 'Pending Rides', 'Amount Collected (₹)', 'Amount Pending (₹)']];
   RIDERS.forEach(r => {
     const s = calcR(r.name);
-    summaryRows.push([r.name, s.pR + s.uR, s.pR, s.uR, s.paid, s.pending]);
+    summaryRows.push([r.name, r.fare||'', FARE, s.pR+s.uR, s.pR, s.uR, s.paid, s.pending]);
   });
 
-  const wb = buildXlsx([
-    { name: 'Trip Log', rows },
-    { name: 'Summary', rows: summaryRows }
-  ]);
+  const fuelRows = [['Date', 'Litres', 'Amount (₹)', '₹/Litre', 'Note']];
+  fuelEntries.forEach(f => {
+    fuelRows.push([f.date, f.litres, f.amount, parseFloat((f.amount/f.litres).toFixed(2)), f.note||'']);
+  });
 
   const today = new Date().toISOString().split('T')[0];
+  const wb = buildXlsx([
+    { name: 'Trip Log', rows },
+    { name: 'Summary', rows: summaryRows },
+    { name: 'Fuel Log', rows: fuelRows }
+  ]);
   downloadBlob(wb, `Raax_Backup_${today}.xlsx`);
   showToast('📥 Exported successfully!');
 }
@@ -1801,6 +2071,7 @@ window.addEventListener('DOMContentLoaded', () => {
         if (id === 'screen-log')      { renderRiders(); updateStats(); }
         if (id === 'screen-history')  { renderHistory(); }
         if (id === 'screen-summary')  { renderSummary(); }
+        if (id === 'screen-fuel')     { renderFuel(); }
         if (id === 'screen-settings') { renderRidersList(); renderLastUpdated(); }
         showToast('✅ Refreshed');
         spinner.classList.remove('spinning');
@@ -1817,6 +2088,13 @@ window.addEventListener('DOMContentLoaded', () => {
 
 window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('logDate').value = todayStr();
+  // Set month pickers to current month
+  const mo = new Date().toISOString().slice(0,7);
+  const sm = document.getElementById('summaryMonth');
+  const fm = document.getElementById('fuelMonth');
+  if (sm) sm.value = mo;
+  if (fm) fm.value = mo;
+
   renderRiders(); updateStats(); renderFilterBar();
 
   // Auth / setup flow
