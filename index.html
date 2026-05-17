@@ -1453,7 +1453,11 @@ function showConfirm(title, body, onOk) {
   _confirmCallback = onOk;
   document.getElementById('confirmTitle').textContent = title;
   document.getElementById('confirmBody').textContent  = body;
-  document.getElementById('confirmOkBtn').onclick = () => { closeConfirm(); if (_confirmCallback) _confirmCallback(); };
+  document.getElementById('confirmOkBtn').onclick = () => {
+    const cb = _confirmCallback; // capture BEFORE closeConfirm nulls it
+    closeConfirm();
+    if (cb) cb();
+  };
   document.getElementById('confirmModal').classList.add('open');
 }
 function closeConfirm() {
@@ -1905,11 +1909,11 @@ function importExcel(input) {
   input.value = '';
 
   const reader = new FileReader();
-  reader.onload = e => {
+  reader.onload = async e => {
     try {
       const bytes = new Uint8Array(e.target.result);
-      const text = extractSheetFromXlsx(bytes, 0);
-      if (!text) { showToast('❌ Could not read file'); return; }
+      const text  = await extractSheetFromXlsx(bytes);
+      if (!text) { showToast('❌ Could not read file — is it a Raax .xlsx backup?'); return; }
 
       const rows = parseSheetRows(text);
       if (!rows.length || rows[0][0] !== 'Date') {
@@ -1971,25 +1975,73 @@ function importExcel(input) {
 }
 
 // ── XLSX PARSER (reads the XML inside zip) ────────────────────
-function extractSheetFromXlsx(bytes, sheetIndex) {
-  // Parse zip to find xl/worksheets/sheet1.xml and xl/sharedStrings.xml
-  const files = unzipToMap(bytes);
-  const sheetKey = Object.keys(files).find(k => k.match(/xl\/worksheets\/sheet1\.xml/i));
-  const ssKey    = Object.keys(files).find(k => k.match(/sharedStrings\.xml/i));
+
+async function unzipToMap(bytes) {
+  const files = {};
+  const view  = new DataView(bytes.buffer);
+  const dec   = new TextDecoder();
+  let i = 0;
+
+  while (i < bytes.length - 4) {
+    if (view.getUint32(i, true) !== 0x04034b50) { i++; continue; }
+
+    const compMethod = view.getUint16(i + 8,  true);
+    const compSize   = view.getUint32(i + 18, true);
+    const nameLen    = view.getUint16(i + 26, true);
+    const extraLen   = view.getUint16(i + 28, true);
+    const name       = dec.decode(bytes.slice(i + 30, i + 30 + nameLen));
+    const dataStart  = i + 30 + nameLen + extraLen;
+    const raw        = bytes.slice(dataStart, dataStart + compSize);
+
+    if (compMethod === 0) {
+      // Stored — no compression
+      files[name] = raw;
+    } else if (compMethod === 8) {
+      // Deflate — decompress using DecompressionStream (supported in Chrome 80+, Safari 16.4+)
+      try {
+        const ds     = new DecompressionStream('deflate-raw');
+        const writer = ds.writable.getWriter();
+        const reader = ds.readable.getReader();
+        writer.write(raw);
+        writer.close();
+        const chunks = [];
+        let done = false;
+        while (!done) {
+          const { value, done: d } = await reader.read();
+          if (value) chunks.push(value);
+          done = d;
+        }
+        const total  = chunks.reduce((s, c) => s + c.length, 0);
+        const merged = new Uint8Array(total);
+        let offset   = 0;
+        for (const c of chunks) { merged.set(c, offset); offset += c.length; }
+        files[name] = merged;
+      } catch(e) {
+        console.warn('Deflate decompression failed for', name, e);
+      }
+    }
+    i = dataStart + compSize;
+  }
+  return files;
+}
+
+async function extractSheetFromXlsx(bytes) {
+  const files    = await unzipToMap(bytes);
+  const sheetKey = Object.keys(files).find(k => /xl\/worksheets\/sheet1\.xml/i.test(k));
+  const ssKey    = Object.keys(files).find(k => /sharedStrings\.xml/i.test(k));
   if (!sheetKey) return null;
 
-  const dec = new TextDecoder();
+  const dec      = new TextDecoder();
   const sheetXml = dec.decode(files[sheetKey]);
   const ssXml    = ssKey ? dec.decode(files[ssKey]) : '';
 
   // Parse shared strings
   const ss = [];
-  const siMatches = ssXml.matchAll(/<si>[\s\S]*?<\/si>/g);
-  for (const m of siMatches) {
-    const t = (m[0].match(/<t[^>]*>([\s\S]*?)<\/t>/g) || []).map(x => x.replace(/<[^>]+>/g,'')).join('');
+  for (const m of ssXml.matchAll(/<si>[\s\S]*?<\/si>/g)) {
+    const t = (m[0].match(/<t[^>]*>([\s\S]*?)<\/t>/g) || [])
+      .map(x => x.replace(/<[^>]+>/g, '')).join('');
     ss.push(t.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&apos;/g,"'"));
   }
-
   return { sheetXml, ss };
 }
 
@@ -1997,14 +2049,19 @@ function parseSheetRows(data) {
   if (!data) return [];
   const { sheetXml, ss } = data;
   const rows = [];
-  const rowMatches = sheetXml.matchAll(/<row[^>]*>([\s\S]*?)<\/row>/g);
-  for (const rm of rowMatches) {
+  // Sparse cell handling: use cell reference (A1, B3 etc.) to fill gaps
+  for (const rm of sheetXml.matchAll(/<row[^>]*r="(\d+)"[^>]*>([\s\S]*?)<\/row>/g)) {
     const row = [];
-    const cellMatches = rm[1].matchAll(/<c[^>]*>([\s\S]*?)<\/c>/g);
-    for (const cm of cellMatches) {
-      const isShared = cm[0].includes('t="s"');
-      const vMatch = cm[1].match(/<v>([\s\S]*?)<\/v>/);
-      const val = vMatch ? vMatch[1] : '';
+    for (const cm of rm[2].matchAll(/<c\s([^>]*)>([\s\S]*?)<\/c>/g)) {
+      const attrs    = cm[1];
+      const inner    = cm[2];
+      const refMatch = attrs.match(/r="([A-Z]+)(\d+)"/);
+      const colIdx   = refMatch ? colLetterToIndex(refMatch[1]) : row.length;
+      // Fill sparse gaps with empty strings
+      while (row.length < colIdx) row.push('');
+      const isShared = attrs.includes('t="s"');
+      const vMatch   = inner.match(/<v>([\s\S]*?)<\/v>/);
+      const val      = vMatch ? vMatch[1] : '';
       row.push(isShared ? (ss[parseInt(val)] || '') : val);
     }
     rows.push(row);
@@ -2012,27 +2069,10 @@ function parseSheetRows(data) {
   return rows;
 }
 
-function unzipToMap(bytes) {
-  // Read zip central directory to locate files
-  const files = {};
-  const view = new DataView(bytes.buffer);
-  const dec = new TextDecoder();
-  let i = 0;
-  while (i < bytes.length - 4) {
-    // Local file header signature: 0x04034b50
-    if (view.getUint32(i, true) === 0x04034b50) {
-      const compMethod   = view.getUint16(i+8, true);
-      const compSize     = view.getUint32(i+18, true);
-      const nameLen      = view.getUint16(i+26, true);
-      const extraLen     = view.getUint16(i+28, true);
-      const name         = dec.decode(bytes.slice(i+30, i+30+nameLen));
-      const dataStart    = i + 30 + nameLen + extraLen;
-      const data         = bytes.slice(dataStart, dataStart + compSize);
-      if (compMethod === 0) files[name] = data; // stored (uncompressed)
-      i = dataStart + compSize;
-    } else { i++; }
-  }
-  return files;
+function colLetterToIndex(letters) {
+  let n = 0;
+  for (const ch of letters) n = n * 26 + ch.charCodeAt(0) - 64;
+  return n - 1; // 0-based
 }
 
 // ── HAPTIC ENGINE ─────────────────────────────────────────────
