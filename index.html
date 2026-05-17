@@ -1908,69 +1908,100 @@ function importExcel(input) {
   const file = input.files[0];
   input.value = '';
 
+  showToast('⏳ Reading file…');
+
   const reader = new FileReader();
   reader.onload = async e => {
     try {
       const bytes = new Uint8Array(e.target.result);
-      const text  = await extractSheetFromXlsx(bytes);
-      if (!text) { showToast('❌ Could not read file — is it a Raax .xlsx backup?'); return; }
 
-      const rows = parseSheetRows(text);
+      // ── Step 1: unzip ──
+      const files = await unzipToMap(bytes);
+      const sheetKey = Object.keys(files).find(k => /xl\/worksheets\/sheet1\.xml/i.test(k));
+      const ssKey    = Object.keys(files).find(k => /sharedStrings\.xml/i.test(k));
+
+      if (!sheetKey) { showToast('❌ Not a valid Raax Excel file'); return; }
+
+      const dec      = new TextDecoder();
+      const sheetXml = dec.decode(files[sheetKey]);
+      const ssXml    = ssKey ? dec.decode(files[ssKey]) : '';
+
+      // ── Step 2: shared strings ──
+      const ss = [];
+      for (const m of ssXml.matchAll(/<si>[\s\S]*?<\/si>/g)) {
+        const t = (m[0].match(/<t[^>]*>([\s\S]*?)<\/t>/g) || []).map(x => x.replace(/<[^>]+>/g,'')).join('');
+        ss.push(t.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&apos;/g,"'"));
+      }
+
+      // ── Step 3: parse rows with sparse-cell support ──
+      const rows = [];
+      for (const rm of sheetXml.matchAll(/<row[^>]*r="(\d+)"[^>]*>([\s\S]*?)<\/row>/g)) {
+        const row = [];
+        for (const cm of rm[2].matchAll(/<c\s([^>]*)>([\s\S]*?)<\/c>/g)) {
+          const attrs    = cm[1];
+          const inner    = cm[2];
+          const refMatch = attrs.match(/r="([A-Z]+)\d+"/);
+          const colIdx   = refMatch ? colLetterToIndex(refMatch[1]) : row.length;
+          while (row.length < colIdx) row.push('');
+          const isShared = attrs.includes('t="s"');
+          const vMatch   = inner.match(/<v>([\s\S]*?)<\/v>/);
+          const val      = vMatch ? vMatch[1] : '';
+          row.push(isShared ? (ss[parseInt(val)] || '') : val);
+        }
+        rows.push(row);
+      }
+
       if (!rows.length || rows[0][0] !== 'Date') {
-        showToast('❌ Invalid Raax backup file');
+        showToast('❌ Invalid format — must be a Raax backup file');
         return;
       }
 
-      // Detect column format by header row
-      // v2 export: Date | Rider | Fare (₹) | Morning Present | Morning Paid | Evening Present | Evening Paid | Trip Total
-      // v1 export: Date | Rider | Morning Present | Morning Paid | Evening Present | Evening Paid | Fare
-      const header = rows[0];
-      const col2   = (header[2] || '').toString().toLowerCase();
-      // If col 2 is fare-related, skip it (offset=1), else old format (offset=0)
-      const colOffset = (col2.includes('fare') || col2 === '₹' || /^\d+$/.test(col2)) ? 1 : 0;
+      // ── Step 4: detect column layout ──
+      const col2      = (rows[0][2] || '').toString().toLowerCase();
+      const colOffset = (col2.includes('fare') || /^\d+$/.test(col2)) ? 1 : 0;
 
+      // ── Step 5: build entries object ──
       const imported = {};
       let count = 0;
       rows.slice(1).forEach(row => {
         const date     = (row[0] || '').toString().trim();
         const name     = (row[1] || '').toString().trim();
+        if (!date || !name || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
         const mPresent = (row[2 + colOffset] || '').toString().trim();
         const mPaid    = (row[3 + colOffset] || '').toString().trim();
         const ePresent = (row[4 + colOffset] || '').toString().trim();
         const ePaid    = (row[5 + colOffset] || '').toString().trim();
-        if (!date || !name || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
         if (!imported[date]) imported[date] = {};
         imported[date][name] = {
-          mP:    mPresent === 'Present' ? 'P' : mPresent === 'Absent' ? 'A' : '',
-          mPaid: mPaid    === 'Paid'    ? 'Y' : mPaid    === 'Pending'? 'N' : '',
-          eP:    ePresent === 'Present' ? 'P' : ePresent === 'Absent' ? 'A' : '',
-          ePaid: ePaid    === 'Paid'    ? 'Y' : ePaid    === 'Pending'? 'N' : '',
+          mP:    mPresent==='Present'?'P': mPresent==='Absent'?'A':'',
+          mPaid: mPaid==='Paid'?'Y':       mPaid==='Pending'?'N':'',
+          eP:    ePresent==='Present'?'P': ePresent==='Absent'?'A':'',
+          ePaid: ePaid==='Paid'?'Y':       ePaid==='Pending'?'N':'',
         };
         count++;
       });
 
-      if (!count) { showToast('❌ No valid rows found in file'); return; }
+      if (!count) { showToast('❌ No data rows found in file'); return; }
 
-      showConfirm(
-        '📤 Import Backup?',
-        `Found ${count} entries across ${Object.keys(imported).length} days. This will MERGE with existing data.`,
-        () => {
-          // Deep merge: per rider per date (don't wipe other riders on same date)
-          Object.entries(imported).forEach(([date, dayData]) => {
-            if (!entries[date]) entries[date] = {};
-            Object.assign(entries[date], dayData);
-          });
-          save();
-          renderRiders(); updateStats();
-          showToast(`✅ Imported ${count} entries across ${Object.keys(imported).length} days!`);
-          haptic('success');
-        }
-      );
+      // ── Step 6: merge directly — NO confirm modal needed ──
+      const backup = JSON.stringify(entries); // snapshot for undo
+      Object.entries(imported).forEach(([date, dayData]) => {
+        if (!entries[date]) entries[date] = {};
+        Object.assign(entries[date], dayData);
+      });
+      save();
+      renderRiders();
+      updateStats();
+      haptic('success');
+      showToast(`✅ Imported ${count} entries across ${Object.keys(imported).length} days!`);
+
     } catch(err) {
       console.error('Import error:', err);
-      showToast('❌ Import failed: ' + (err.message || 'invalid file'));
+      showToast('❌ Import error: ' + (err.message || String(err)));
     }
   };
+
+  reader.onerror = () => showToast('❌ Could not read file');
   reader.readAsArrayBuffer(file);
 }
 
