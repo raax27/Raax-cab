@@ -397,16 +397,23 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 
     <!-- HISTORY -->
     <div id="screen-history" class="screen">
-      <div class="sl">All Logged Entries</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;background:var(--surface);border:1.5px solid var(--border);border-radius:var(--r);padding:10px 14px;flex-wrap:wrap;">
+        <span style="font-size:12px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;">Filter</span>
+        <input type="month" id="historyMonth" style="flex:1;min-width:130px;background:var(--card);border:1px solid var(--border);color:var(--text);padding:7px 10px;border-radius:8px;font-family:'JetBrains Mono',monospace;font-size:13px;" onchange="renderHistory()">
+        <input type="date" id="historyDate" style="flex:1;min-width:140px;background:var(--card);border:1px solid var(--border);color:var(--text);padding:7px 10px;border-radius:8px;font-family:'JetBrains Mono',monospace;font-size:13px;" onchange="renderHistory()">
+        <button onclick="clearHistoryFilters()" style="background:var(--surface);border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:7px 12px;font-family:Nunito,sans-serif;font-size:11px;font-weight:800;cursor:pointer;">Clear</button>
+      </div>
+      <div class="sl" id="historyTitle">All Logged Entries</div>
       <div id="historyContainer"></div>
     </div>
 
     <!-- SUMMARY -->
     <div id="screen-summary" class="screen">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;background:var(--surface);border:1.5px solid var(--border);border-radius:var(--r);padding:10px 14px;">
-        <span style="font-size:13px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;">Month</span>
-        <input type="month" id="summaryMonth" style="flex:1;background:var(--card);border:1px solid var(--border);color:var(--text);padding:7px 10px;border-radius:8px;font-family:'JetBrains Mono',monospace;font-size:13px;" onchange="renderSummary()">
-        <button onclick="setSummaryMonthToday()" style="background:var(--accent);border:none;color:#fff;border-radius:8px;padding:7px 12px;font-family:Nunito,sans-serif;font-size:12px;font-weight:800;cursor:pointer;">This Month</button>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;background:var(--surface);border:1.5px solid var(--border);border-radius:var(--r);padding:10px 14px;flex-wrap:wrap;">
+        <span style="font-size:12px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;">Period</span>
+        <input type="month" id="summaryMonth" style="flex:1;min-width:130px;background:var(--card);border:1px solid var(--border);color:var(--text);padding:7px 10px;border-radius:8px;font-family:'JetBrains Mono',monospace;font-size:13px;" onchange="onSummaryMonthChange()">
+        <input type="date" id="summaryDate" style="flex:1;min-width:140px;background:var(--card);border:1px solid var(--border);color:var(--text);padding:7px 10px;border-radius:8px;font-family:'JetBrains Mono',monospace;font-size:13px;" onchange="renderSummary()">
+        <button onclick="setSummaryMonthToday()" style="background:var(--accent);border:none;color:#fff;border-radius:8px;padding:7px 12px;font-family:Nunito,sans-serif;font-size:12px;font-weight:800;cursor:pointer;">Today</button>
       </div>
       <div id="summaryContainer"></div>
     </div>
@@ -510,7 +517,16 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
       </div>
       <input type="file" id="importFile" accept=".xlsx" style="display:none" onchange="importExcel(this)">
 
-      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v1.0 — Your data stays on your device</div>
+      <div class="sl" style="margin-top:20px">App</div>
+      <div class="scard">
+        <div class="srow" onclick="forceUpdate()">
+          <span class="sri">🔄</span>
+          <div class="srt"><div class="srn">Check for Updates</div><div class="srd">Force refresh to latest version</div></div>
+          <span class="srr">›</span>
+        </div>
+      </div>
+
+      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v2.6 · 19 May 2026 — Your data stays on your device</div>
     </div>
 
   </div>
@@ -1022,11 +1038,12 @@ function riderFare(name) {
   return (r && r.fare) ? r.fare : FARE;
 }
 
-function calcR(name, monthFilter) {
+function calcR(name, monthFilter, dateFilter) {
   let pR=0,uR=0,pendingDates=[];
   const fare = riderFare(name);
   Object.entries(entries).forEach(([date, day])=>{
-    if (monthFilter && !date.startsWith(monthFilter)) return;
+    if (dateFilter && date !== dateFilter) return;
+    if (!dateFilter && monthFilter && !date.startsWith(monthFilter)) return;
     const d=day[name]; if(!d) return;
     if(d.mP==='P'&&d.mPaid==='Y')pR++;
     if(d.eP==='P'&&d.ePaid==='Y')pR++;
@@ -1215,15 +1232,54 @@ function removePhoto(){
 document.getElementById('photoModal').addEventListener('click',function(e){if(e.target===this)closeModal();});
 
 // ── HISTORY ───────────────────────────────────────────────────
+function clearHistoryFilters() {
+  const m = document.getElementById('historyMonth');
+  const d = document.getElementById('historyDate');
+  if (m) m.value = '';
+  if (d) d.value = '';
+  renderHistory();
+}
+
 function renderHistory(){
-  const con=document.getElementById('historyContainer');
-  const dates=Object.keys(entries).filter(d=>RIDERS.some(r=>{const x=entries[d][r.name]||{};return x.mP||x.eP;})).sort().reverse();
-  if(!dates.length){con.innerHTML=`<div class="hempty"><div class="big">📭</div>No entries yet.<br>Log your first trip!</div>`;return;}
-  con.innerHTML=dates.map(date=>{
-    const day=entries[date]; const t=calcDay(day);
-    const rows=RIDERS.map(r=>{
-      const d=day[r.name]||{}; if(!d.mP&&!d.eP) return '';
-      const img=photos[r.name];
+  const con = document.getElementById('historyContainer');
+  const title = document.getElementById('historyTitle');
+  const monthEl = document.getElementById('historyMonth');
+  const dateEl  = document.getElementById('historyDate');
+  const monthFilter = monthEl ? monthEl.value : '';
+  const dateFilter  = dateEl  ? dateEl.value  : '';
+
+  let dates = Object.keys(entries).filter(d => RIDERS.some(r => {
+    const x = entries[d][r.name] || {};
+    return x.mP || x.eP;
+  }));
+
+  // Apply filters
+  if (dateFilter) dates = dates.filter(d => d === dateFilter);
+  else if (monthFilter) dates = dates.filter(d => d.startsWith(monthFilter));
+
+  dates = dates.sort().reverse();
+
+  // Update title
+  if (title) {
+    if (dateFilter) {
+      title.textContent = formatDate(dateFilter);
+    } else if (monthFilter) {
+      title.textContent = new Date(monthFilter+'-01').toLocaleDateString('en-IN',{month:'long',year:'numeric'}) + ` · ${dates.length} day${dates.length!==1?'s':''}`;
+    } else {
+      title.textContent = `All Logged Entries · ${dates.length} day${dates.length!==1?'s':''}`;
+    }
+  }
+
+  if (!dates.length) {
+    con.innerHTML = `<div class="hempty"><div class="big">📭</div>${monthFilter||dateFilter ? 'No entries for this filter.<br>Try a different date.' : 'No entries yet.<br>Log your first trip!'}</div>`;
+    return;
+  }
+
+  con.innerHTML = dates.map(date => {
+    const day = entries[date]; const t = calcDay(day);
+    const rows = RIDERS.map(r => {
+      const d = day[r.name] || {}; if (!d.mP && !d.eP) return '';
+      const img = photos[r.name];
       return `<div class="hrrow">
         <div class="hav" style="background:${img?'#1c1530':r.clr}">${img?`<img src="${img}" alt="${esc(r.name)}">`:`${esc(r.name[0])}`}</div>
         <div class="hrn">${esc(r.name)}</div>
@@ -1243,7 +1299,7 @@ function renderHistory(){
         </div>
         <span style="color:var(--muted);font-size:12px;margin-left:6px">▾</span>
       </div>
-      <div class="hbody">${rows}</div>
+      <div class="hbody ${dateFilter?'open':''}">${rows}</div>
     </div>`;
   }).join('');
 }
@@ -1253,27 +1309,49 @@ function currentSummaryMonth() {
   const el = document.getElementById('summaryMonth');
   return el ? el.value : new Date().toISOString().slice(0,7);
 }
+function currentSummaryDate() {
+  const el = document.getElementById('summaryDate');
+  return el ? el.value : '';
+}
 function setSummaryMonthToday() {
-  const el = document.getElementById('summaryMonth');
-  if (el) { el.value = new Date().toISOString().slice(0,7); renderSummary(); }
+  const m = document.getElementById('summaryMonth');
+  const d = document.getElementById('summaryDate');
+  if (m) m.value = new Date().toISOString().slice(0,7);
+  if (d) d.value = '';
+  renderSummary();
+}
+function onSummaryMonthChange() {
+  // Clear date filter when month changes
+  const d = document.getElementById('summaryDate');
+  if (d) d.value = '';
+  renderSummary();
 }
 
 function renderSummary(){
   const mo = currentSummaryMonth();
+  const dt = currentSummaryDate();
+  const useDate = !!dt;
   let g=0,gp=0,gt=0;
-  RIDERS.forEach(r=>{ const s=calcR(r.name,mo); g+=s.paid; gp+=s.pending; gt+=s.pR+s.uR; });
+  RIDERS.forEach(r=>{ const s=calcR(r.name, mo, dt); g+=s.paid; gp+=s.pending; gt+=s.pR+s.uR; });
 
-  // Fuel total for the month
-  const fuelEntries = JSON.parse(localStorage.getItem('rsPWA_fuel')||'[]');
-  const fuelMonthTotal = fuelEntries.filter(f=>f.date.startsWith(mo)).reduce((s,f)=>s+f.amount,0);
-  const fuelMonthLitres = fuelEntries.filter(f=>f.date.startsWith(mo)).reduce((s,f)=>s+f.litres,0);
+  // Fuel total for the period
+  let fuelTotal = 0, fuelLitres = 0, fuelCount = 0;
+  fuelEntries.forEach(f => {
+    if (useDate ? f.date === dt : f.date.startsWith(mo)) {
+      fuelTotal  += f.amount;
+      fuelLitres += f.litres;
+      fuelCount  += 1;
+    }
+  });
 
-  const moLabel = mo ? new Date(mo+'-01').toLocaleDateString('en-IN',{month:'long',year:'numeric'}) : 'All Time';
+  const periodLabel = useDate
+    ? new Date(dt+'T00:00:00').toLocaleDateString('en-IN',{weekday:'long',day:'numeric',month:'long',year:'numeric'})
+    : (mo ? new Date(mo+'-01').toLocaleDateString('en-IN',{month:'long',year:'numeric'}) : 'All Time');
 
   const cards = RIDERS.map(r=>{
-    const s=calcR(r.name,mo); const img=photos[r.name];
+    const s=calcR(r.name, mo, dt); const img=photos[r.name];
     const fareLabel = r.fare ? `₹${r.fare}/ride` : `₹${FARE}/ride (default)`;
-    return `<div class="rsc" data-rider="${esc(r.name)}" style="cursor:${s.pending>0?'pointer':'default'};" onclick="openRiderPending('${esc(r.name)}','${mo}')">
+    return `<div class="rsc" data-rider="${esc(r.name)}" style="cursor:${s.pending>0?'pointer':'default'};" onclick="openRiderPending('${esc(r.name)}','${mo}','${dt}')">
       <div class="rsav" style="background:${img?'#1c1530':r.clr}">${img?`<img src="${img}" alt="${esc(r.name)}">`:`${esc(r.name[0])}`}</div>
       <div class="rsin">
         <div class="rsnm">${esc(r.name)}</div>
@@ -1290,20 +1368,20 @@ function renderSummary(){
 
   document.getElementById('summaryContainer').innerHTML=`
     <div class="shero">
-      <div style="font-size:11px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">${moLabel}</div>
+      <div style="font-size:11px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">${periodLabel}</div>
       <div class="shv">₹${g}</div><div class="shl">Collected</div>
       <div class="shsub">
         <div class="shsi"><div class="shsv" style="color:var(--red)">₹${gp}</div><div class="shsl">Pending</div></div>
         <div class="shsi"><div class="shsv" style="color:var(--blue)">${gt}</div><div class="shsl">Trips</div></div>
-        ${fuelMonthTotal>0?`<div class="shsi"><div class="shsv" style="color:#fbbf24">₹${fuelMonthTotal}</div><div class="shsl">Fuel</div></div>`:''}
+        ${fuelTotal>0?`<div class="shsi"><div class="shsv" style="color:#fbbf24">₹${fuelTotal}</div><div class="shsl">Fuel</div></div>`:''}
       </div>
     </div>
-    <div class="sl">Per Rider — tap to see pending dates</div>${cards}`;
+    <div class="sl">Per Rider${useDate?' — for this date':' — tap to see pending dates'}</div>${cards}`;
 }
 
 // ── RIDER PENDING DETAIL ──────────────────────────────────────
-function openRiderPending(name, mo) {
-  const s = calcR(name, mo || currentSummaryMonth());
+function openRiderPending(name, mo, dt) {
+  const s = calcR(name, mo || currentSummaryMonth(), dt || '');
   if (!s.pendingDates.length) { showToast('✅ ' + name + ' has no pending dues!'); return; }
   const rider = RIDERS.find(r=>r.name===name);
   const fare = riderFare(name);
@@ -1687,424 +1765,423 @@ function exportExcel() {
   const dates = Object.keys(entries).sort();
   if (!dates.length && !fuelEntries.length) { showToast('⚠️ No data to export'); return; }
 
-  const rows = [];
-  rows.push(['Date', 'Rider', 'Fare (₹)', 'Morning Present', 'Morning Paid', 'Evening Present', 'Evening Paid', 'Trip Total (₹)']);
+  const tripRows = [['Date','Rider','Fare (₹)','Morning Present','Morning Paid','Evening Present','Evening Paid','Trip Total (₹)']];
   dates.forEach(date => {
     const day = entries[date];
     RIDERS.forEach(r => {
       const d = day[r.name] || {};
       if (!d.mP && !d.eP) return;
       const fare = riderFare(r.name);
-      const tripTotal = ((d.mP==='P'&&d.mPaid==='Y'?1:0) + (d.eP==='P'&&d.ePaid==='Y'?1:0)) * fare;
-      rows.push([
-        date, r.name, fare,
+      const tot  = ((d.mP==='P'&&d.mPaid==='Y'?1:0)+(d.eP==='P'&&d.ePaid==='Y'?1:0))*fare;
+      tripRows.push([date, r.name, fare,
         d.mP==='P'?'Present':d.mP==='A'?'Absent':'',
         d.mP==='P'?(d.mPaid==='Y'?'Paid':d.mPaid==='N'?'Pending':''):'',
         d.eP==='P'?'Present':d.eP==='A'?'Absent':'',
         d.eP==='P'?(d.ePaid==='Y'?'Paid':d.ePaid==='N'?'Pending':''):'',
-        tripTotal
-      ]);
+        tot]);
     });
   });
 
-  const summaryRows = [['Rider', 'Custom Fare (₹)', 'Default Fare (₹)', 'Total Rides', 'Paid Rides', 'Pending Rides', 'Amount Collected (₹)', 'Amount Pending (₹)']];
+  const summaryRows = [['Rider','Custom Fare (₹)','Default Fare (₹)','Total Rides','Paid Rides','Pending Rides','Amount Collected (₹)','Amount Pending (₹)']];
   RIDERS.forEach(r => {
     const s = calcR(r.name);
     summaryRows.push([r.name, r.fare||'', FARE, s.pR+s.uR, s.pR, s.uR, s.paid, s.pending]);
   });
 
-  const fuelRows = [['Date', 'Litres', 'Amount (₹)', '₹/Litre', 'Note']];
+  const fuelRows = [['Date','Litres','Amount (₹)','Rate (₹/L)','Note']];
   fuelEntries.forEach(f => {
     fuelRows.push([f.date, f.litres, f.amount, parseFloat((f.amount/f.litres).toFixed(2)), f.note||'']);
   });
 
   const today = new Date().toISOString().split('T')[0];
   const wb = buildXlsx([
-    { name: 'Trip Log', rows },
-    { name: 'Summary', rows: summaryRows },
-    { name: 'Fuel Log', rows: fuelRows }
+    { name:'Trip Log',  rows:tripRows },
+    { name:'Summary',   rows:summaryRows },
+    { name:'Fuel Log',  rows:fuelRows }
   ]);
-  downloadBlob(wb, `Raax_Backup_${today}.xlsx`);
-  showToast('📥 Exported successfully!');
+  downloadBlob(wb, `Raax_Backup_${today}.xlsx`, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  showToast('📥 Excel exported!');
 }
 
-// ── XLSX BUILDER (pure JS, no library) ────────────────────────
+// ── XLSX BUILDER (pure JS — uncompressed/stored) ──
 function buildXlsx(sheets) {
-  // Minimal OOXML .xlsx builder
-  const colLetter = n => {
-    let s = ''; n++;
-    while (n > 0) { s = String.fromCharCode(64 + (n % 26 || 26)) + s; n = Math.floor((n - 1) / 26); }
-    return s;
-  };
-
-  const escXml = s => String(s)
+  const esc = s => String(s==null?'':s)
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
     .replace(/"/g,'&quot;').replace(/'/g,'&apos;');
 
-  const sharedStrings = [];
-  const ssMap = {};
+  const ssMap = {}; const ssArr = [];
   const si = v => {
-    const k = String(v);
-    if (ssMap[k] === undefined) { ssMap[k] = sharedStrings.length; sharedStrings.push(k); }
+    const k = String(v==null?'':v);
+    if (ssMap[k]===undefined){ssMap[k]=ssArr.length;ssArr.push(k);}
     return ssMap[k];
   };
 
-  const buildSheet = (rows) => {
-    let xml = '<?xml version="1.0" encoding="UTF-8"?>'
-      + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/sheet">'
-      + '<sheetData>';
-    rows.forEach((row, ri) => {
-      xml += `<row r="${ri+1}">`;
-      row.forEach((cell, ci) => {
-        const ref = colLetter(ci) + (ri+1);
-        if (typeof cell === 'number') {
-          xml += `<c r="${ref}"><v>${cell}</v></c>`;
-        } else {
-          xml += `<c r="${ref}" t="s"><v>${si(cell)}</v></c>`;
-        }
-      });
-      xml += '</row>';
-    });
-    xml += '</sheetData></worksheet>';
-    return xml;
+  const colLetter = n => {
+    let s=''; n++;
+    while(n>0){s=String.fromCharCode(64+(n%26||26))+s;n=Math.floor((n-1)/26);}
+    return s;
   };
 
-  const ssXml = '<?xml version="1.0" encoding="UTF-8"?>'
-    + '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/sheet" count="' + sharedStrings.length + '" uniqueCount="' + sharedStrings.length + '">'
-    + sharedStrings.map(s => `<si><t xml:space="preserve">${escXml(s)}</t></si>`).join('')
+  const sheetXmls = sheets.map(({rows}) => {
+    let x = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      + '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+      + '<sheetData>';
+    rows.forEach((row, ri) => {
+      x += `<row r="${ri+1}">`;
+      row.forEach((cell, ci) => {
+        const ref = colLetter(ci)+(ri+1);
+        if (typeof cell === 'number') {
+          x += `<c r="${ref}"><v>${cell}</v></c>`;
+        } else {
+          x += `<c r="${ref}" t="s"><v>${si(cell)}</v></c>`;
+        }
+      });
+      x += '</row>';
+    });
+    x += '</sheetData></worksheet>';
+    return x;
+  });
+
+  const ssXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + `<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${ssArr.length}" uniqueCount="${ssArr.length}">`
+    + ssArr.map(s=>`<si><t xml:space="preserve">${esc(s)}</t></si>`).join('')
     + '</sst>';
 
-  // Build sheets first to populate sharedStrings
-  const sheetXmls = sheets.map(s => buildSheet(s.rows));
-
-  // Rebuild ssXml after all sheets processed
-  const ssXmlFinal = '<?xml version="1.0" encoding="UTF-8"?>'
-    + '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/sheet" count="' + sharedStrings.length + '" uniqueCount="' + sharedStrings.length + '">'
-    + sharedStrings.map(s => `<si><t xml:space="preserve">${escXml(s)}</t></si>`).join('')
-    + '</sst>';
-
-  const workbookXml = '<?xml version="1.0" encoding="UTF-8"?>'
-    + '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/sheet" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+  const wbXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
     + '<sheets>'
-    + sheets.map((s,i) => `<sheet name="${escXml(s.name)}" sheetId="${i+1}" r:id="rId${i+2}"/>`).join('')
+    + sheets.map((s,i)=>`<sheet name="${esc(s.name)}" sheetId="${i+1}" r:id="rId${i+2}"/>`).join('')
     + '</sheets></workbook>';
 
-  const wbRels = '<?xml version="1.0" encoding="UTF-8"?>'
+  const wbRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
     + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
     + '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/>'
-    + sheets.map((s,i) => `<Relationship Id="rId${i+2}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i+1}.xml"/>`).join('')
+    + sheets.map((_,i)=>`<Relationship Id="rId${i+2}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i+1}.xml"/>`).join('')
     + '</Relationships>';
 
-  const contentTypes = '<?xml version="1.0" encoding="UTF-8"?>'
+  const ctXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
     + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
     + '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
-    + '<Default Extension="xml" ContentType="application/xml"/>'
+    + '<Default Extension="xml"  ContentType="application/xml"/>'
     + '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
     + '<Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/>'
-    + sheets.map((s,i) => `<Override PartName="/xl/worksheets/sheet${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')
+    + sheets.map((_,i)=>`<Override PartName="/xl/worksheets/sheet${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')
     + '</Types>';
 
-  const rootRels = '<?xml version="1.0" encoding="UTF-8"?>'
+  const rootRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
     + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
     + '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
     + '</Relationships>';
 
-  // Zip it all up using JSZip-style manual approach — build zip bytes manually
-  const files = {
-    '[Content_Types].xml': contentTypes,
-    '_rels/.rels': rootRels,
-    'xl/workbook.xml': workbookXml,
+  const fileMap = {
+    '[Content_Types].xml': ctXml,
+    '_rels/.rels':          rootRels,
+    'xl/workbook.xml':      wbXml,
     'xl/_rels/workbook.xml.rels': wbRels,
-    'xl/sharedStrings.xml': ssXmlFinal,
+    'xl/sharedStrings.xml': ssXml,
   };
-  sheets.forEach((s,i) => {
-    files[`xl/worksheets/sheet${i+1}.xml`] = sheetXmls[i];
+  sheets.forEach((_, i) => {
+    fileMap[`xl/worksheets/sheet${i+1}.xml`] = sheetXmls[i];
   });
 
-  return zipFiles(files);
+  return zipFiles(fileMap);
 }
 
-// ── MINIMAL ZIP BUILDER ───────────────────────────────────────
-function zipFiles(files) {
+function zipFiles(fileMap) {
   const enc = new TextEncoder();
-  const entries = [];
-  let offset = 0;
+  const u16 = n => { const b=new Uint8Array(2); b[0]=n&0xFF; b[1]=(n>>8)&0xFF; return b; };
+  const u32 = n => { const b=new Uint8Array(4); b[0]=n&0xFF; b[1]=(n>>8)&0xFF; b[2]=(n>>16)&0xFF; b[3]=(n>>24)&0xFF; return b; };
+  const cat = (...a) => { const t=a.reduce((s,x)=>s+x.length,0); const r=new Uint8Array(t); let o=0; a.forEach(x=>{r.set(x,o);o+=x.length;}); return r; };
 
-  const crc32 = (data) => {
-    let crc = 0xFFFFFFFF;
-    const table = crc32.table || (crc32.table = (() => {
-      const t = new Uint32Array(256);
-      for (let i=0;i<256;i++){let c=i;for(let j=0;j<8;j++)c=c&1?(0xEDB88320^(c>>>1)):(c>>>1);t[i]=c;}
-      return t;
-    })());
-    for (let i=0;i<data.length;i++) crc = table[(crc^data[i])&0xFF]^(crc>>>8);
-    return (crc^0xFFFFFFFF)>>>0;
+  const crc32tbl = (() => {
+    const t=new Uint32Array(256);
+    for(let i=0;i<256;i++){let c=i;for(let j=0;j<8;j++)c=c&1?(0xEDB88320^(c>>>1)):(c>>>1);t[i]=c;}
+    return t;
+  })();
+  const crc32 = data => {
+    let c=0xFFFFFFFF;
+    for(let i=0;i<data.length;i++)c=crc32tbl[(c^data[i])&0xFF]^(c>>>8);
+    return (c^0xFFFFFFFF)>>>0;
   };
 
-  const u32 = (n) => { const b=new Uint8Array(4); b[0]=n&0xFF;b[1]=(n>>8)&0xFF;b[2]=(n>>16)&0xFF;b[3]=(n>>24)&0xFF; return b; };
-  const u16 = (n) => { const b=new Uint8Array(2); b[0]=n&0xFF;b[1]=(n>>8)&0xFF; return b; };
-  const concat = (...arrays) => { const total=arrays.reduce((s,a)=>s+a.length,0); const r=new Uint8Array(total); let o=0; arrays.forEach(a=>{r.set(a,o);o+=a.length;}); return r; };
-
-  const localHeaders = [];
-  const centralDirs = [];
-
-  for (const [name, content] of Object.entries(files)) {
-    const nameBytes = enc.encode(name);
-    const dataBytes = enc.encode(content);
-    const crc = crc32(dataBytes);
-    const size = dataBytes.length;
-
-    const localHeader = concat(
-      new Uint8Array([0x50,0x4B,0x03,0x04]), // signature
-      u16(20), u16(0), u16(0),               // version, flags, compression (stored)
-      u16(0), u16(0),                         // mod time, mod date
-      u32(crc), u32(size), u32(size),         // crc32, compressed, uncompressed
-      u16(nameBytes.length), u16(0),          // name len, extra len
-      nameBytes, dataBytes
+  const locals=[]; const centrals=[]; let offset=0;
+  for(const [name, content] of Object.entries(fileMap)){
+    const nb=enc.encode(name);
+    const db=enc.encode(content);
+    const crc=crc32(db);
+    const sz=db.length;
+    const lh=cat(
+      new Uint8Array([0x50,0x4B,0x03,0x04]),
+      u16(20),u16(0),u16(0),u16(0),u16(0),
+      u32(crc),u32(sz),u32(sz),
+      u16(nb.length),u16(0),
+      nb,db
     );
-
-    const centralDir = concat(
-      new Uint8Array([0x50,0x4B,0x01,0x02]), // signature
-      u16(20), u16(20), u16(0), u16(0),      // versions, flags
-      u16(0), u16(0), u16(0),                // compression, time, date
-      u32(crc), u32(size), u32(size),        // crc, sizes
-      u16(nameBytes.length), u16(0), u16(0), // name len, extra, comment
-      u16(0), u16(0), u32(0),                // disk, attrs
-      u32(offset),                            // local header offset
-      nameBytes
+    const cd=cat(
+      new Uint8Array([0x50,0x4B,0x01,0x02]),
+      u16(20),u16(20),u16(0),u16(0),u16(0),u16(0),
+      u32(crc),u32(sz),u32(sz),
+      u16(nb.length),u16(0),u16(0),u16(0),u16(0),u32(0),
+      u32(offset),nb
     );
-
-    offset += localHeader.length;
-    localHeaders.push(localHeader);
-    centralDirs.push(centralDir);
+    offset+=lh.length;
+    locals.push(lh);
+    centrals.push(cd);
   }
-
-  const cdOffset = offset;
-  const cdSize = centralDirs.reduce((s,d)=>s+d.length,0);
-  const numEntries = localHeaders.length;
-
-  const eocd = concat(
+  const cdSize=centrals.reduce((s,c)=>s+c.length,0);
+  const eocd=cat(
     new Uint8Array([0x50,0x4B,0x05,0x06,0,0,0,0]),
-    u16(numEntries), u16(numEntries),
-    u32(cdSize), u32(cdOffset),
-    u16(0)
+    u16(locals.length),u16(locals.length),
+    u32(cdSize),u32(offset),u16(0)
   );
-
-  return concat(...localHeaders, ...centralDirs, eocd);
+  return cat(...locals,...centrals,eocd);
 }
 
-function downloadBlob(bytes, filename) {
-  const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = filename;
+function downloadBlob(bytes, filename, mime) {
+  const blob = new Blob([bytes], {type: mime||'application/octet-stream'});
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href=url; a.download=filename;
   document.body.appendChild(a); a.click();
-  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 500);
+  setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(url);},600);
 }
 
-// ── IMPORT ────────────────────────────────────────────────────
+// ── IMPORT (handles BOTH stored AND deflate compressed files) ──
 function importExcel(input) {
   if (!input.files || !input.files[0]) return;
   const file = input.files[0];
   input.value = '';
-
   showToast('⏳ Reading file…');
 
   const reader = new FileReader();
   reader.onload = async e => {
     try {
-      const bytes = new Uint8Array(e.target.result);
-
-      // ── Step 1: unzip ──
-      const files = await unzipToMap(bytes);
-      const sheetKey = Object.keys(files).find(k => /xl\/worksheets\/sheet1\.xml/i.test(k));
-      const ssKey    = Object.keys(files).find(k => /sharedStrings\.xml/i.test(k));
-
-      if (!sheetKey) { showToast('❌ Not a valid Raax Excel file'); return; }
-
-      const dec      = new TextDecoder();
-      const sheetXml = dec.decode(files[sheetKey]);
-      const ssXml    = ssKey ? dec.decode(files[ssKey]) : '';
-
-      // ── Step 2: shared strings ──
-      const ss = [];
-      for (const m of ssXml.matchAll(/<si>[\s\S]*?<\/si>/g)) {
-        const t = (m[0].match(/<t[^>]*>([\s\S]*?)<\/t>/g) || []).map(x => x.replace(/<[^>]+>/g,'')).join('');
-        ss.push(t.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&apos;/g,"'"));
-      }
-
-      // ── Step 3: parse rows with sparse-cell support ──
-      const rows = [];
-      for (const rm of sheetXml.matchAll(/<row[^>]*r="(\d+)"[^>]*>([\s\S]*?)<\/row>/g)) {
-        const row = [];
-        for (const cm of rm[2].matchAll(/<c\s([^>]*)>([\s\S]*?)<\/c>/g)) {
-          const attrs    = cm[1];
-          const inner    = cm[2];
-          const refMatch = attrs.match(/r="([A-Z]+)\d+"/);
-          const colIdx   = refMatch ? colLetterToIndex(refMatch[1]) : row.length;
-          while (row.length < colIdx) row.push('');
-          const isShared = attrs.includes('t="s"');
-          const vMatch   = inner.match(/<v>([\s\S]*?)<\/v>/);
-          const val      = vMatch ? vMatch[1] : '';
-          row.push(isShared ? (ss[parseInt(val)] || '') : val);
-        }
-        rows.push(row);
-      }
-
-      if (!rows.length || rows[0][0] !== 'Date') {
-        showToast('❌ Invalid format — must be a Raax backup file');
-        return;
-      }
-
-      // ── Step 4: detect column layout ──
-      const col2      = (rows[0][2] || '').toString().toLowerCase();
-      const colOffset = (col2.includes('fare') || /^\d+$/.test(col2)) ? 1 : 0;
-
-      // ── Step 5: build entries object ──
-      const imported = {};
-      let count = 0;
-      rows.slice(1).forEach(row => {
-        const date     = (row[0] || '').toString().trim();
-        const name     = (row[1] || '').toString().trim();
-        if (!date || !name || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
-        const mPresent = (row[2 + colOffset] || '').toString().trim();
-        const mPaid    = (row[3 + colOffset] || '').toString().trim();
-        const ePresent = (row[4 + colOffset] || '').toString().trim();
-        const ePaid    = (row[5 + colOffset] || '').toString().trim();
-        if (!imported[date]) imported[date] = {};
-        imported[date][name] = {
-          mP:    mPresent==='Present'?'P': mPresent==='Absent'?'A':'',
-          mPaid: mPaid==='Paid'?'Y':       mPaid==='Pending'?'N':'',
-          eP:    ePresent==='Present'?'P': ePresent==='Absent'?'A':'',
-          ePaid: ePaid==='Paid'?'Y':       ePaid==='Pending'?'N':'',
-        };
-        count++;
-      });
-
-      if (!count) { showToast('❌ No data rows found in file'); return; }
-
-      // ── Step 6: merge directly — NO confirm modal needed ──
-      const backup = JSON.stringify(entries); // snapshot for undo
-      Object.entries(imported).forEach(([date, dayData]) => {
-        if (!entries[date]) entries[date] = {};
-        Object.assign(entries[date], dayData);
-      });
-      save();
-      renderRiders();
-      updateStats();
-      haptic('success');
-      showToast(`✅ Imported ${count} entries across ${Object.keys(imported).length} days!`);
-
+      await _doImport(new Uint8Array(e.target.result));
     } catch(err) {
       console.error('Import error:', err);
-      showToast('❌ Import error: ' + (err.message || String(err)));
+      showToast('❌ ' + (err.message || 'Could not read file'));
     }
   };
-
-  reader.onerror = () => showToast('❌ Could not read file');
+  reader.onerror = () => showToast('❌ File read failed');
   reader.readAsArrayBuffer(file);
 }
 
-// ── XLSX PARSER (reads the XML inside zip) ────────────────────
-
-async function unzipToMap(bytes) {
+async function _doImport(bytes) {
+  // ── 1. Unzip — handles stored (method 0) AND deflate (method 8) ──
   const files = {};
-  const view  = new DataView(bytes.buffer);
-  const dec   = new TextDecoder();
-  let i = 0;
+  const view  = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const tdec  = new TextDecoder();
 
-  while (i < bytes.length - 4) {
-    if (view.getUint32(i, true) !== 0x04034b50) { i++; continue; }
-
-    const compMethod = view.getUint16(i + 8,  true);
-    const compSize   = view.getUint32(i + 18, true);
-    const nameLen    = view.getUint16(i + 26, true);
-    const extraLen   = view.getUint16(i + 28, true);
-    const name       = dec.decode(bytes.slice(i + 30, i + 30 + nameLen));
-    const dataStart  = i + 30 + nameLen + extraLen;
-    const raw        = bytes.slice(dataStart, dataStart + compSize);
-
-    if (compMethod === 0) {
-      // Stored — no compression
-      files[name] = raw;
-    } else if (compMethod === 8) {
-      // Deflate — decompress using DecompressionStream (supported in Chrome 80+, Safari 16.4+)
-      try {
-        const ds     = new DecompressionStream('deflate-raw');
-        const writer = ds.writable.getWriter();
-        const reader = ds.readable.getReader();
-        writer.write(raw);
-        writer.close();
-        const chunks = [];
-        let done = false;
-        while (!done) {
-          const { value, done: d } = await reader.read();
-          if (value) chunks.push(value);
-          done = d;
-        }
-        const total  = chunks.reduce((s, c) => s + c.length, 0);
-        const merged = new Uint8Array(total);
-        let offset   = 0;
-        for (const c of chunks) { merged.set(c, offset); offset += c.length; }
-        files[name] = merged;
-      } catch(e) {
-        console.warn('Deflate decompression failed for', name, e);
-      }
+  async function inflate(raw) {
+    if (typeof DecompressionStream === 'undefined') {
+      throw new Error('Your browser does not support compressed xlsx files. Please re-export from Raax app.');
     }
-    i = dataStart + compSize;
+    const ds = new DecompressionStream('deflate-raw');
+    const w = ds.writable.getWriter();
+    const r = ds.readable.getReader();
+    w.write(raw); w.close();
+    const chunks=[];
+    while(true){
+      const {value,done} = await r.read();
+      if(done) break;
+      if(value) chunks.push(value);
+    }
+    const total = chunks.reduce((s,c)=>s+c.length,0);
+    const out = new Uint8Array(total);
+    let o=0;
+    for(const c of chunks){ out.set(c,o); o+=c.length; }
+    return out;
   }
-  return files;
-}
 
-async function extractSheetFromXlsx(bytes) {
-  const files    = await unzipToMap(bytes);
-  const sheetKey = Object.keys(files).find(k => /xl\/worksheets\/sheet1\.xml/i.test(k));
-  const ssKey    = Object.keys(files).find(k => /sharedStrings\.xml/i.test(k));
-  if (!sheetKey) return null;
+  let i = 0;
+  while (i < bytes.length - 4) {
+    if (view.getUint32(i,true) !== 0x04034b50) { i++; continue; }
+    const method  = view.getUint16(i+8,  true);
+    const csize   = view.getUint32(i+18, true);
+    const nlen    = view.getUint16(i+26, true);
+    const elen    = view.getUint16(i+28, true);
+    const name    = tdec.decode(bytes.slice(i+30, i+30+nlen));
+    const dstart  = i+30+nlen+elen;
+    const raw     = bytes.slice(dstart, dstart+csize);
+    if (method === 0) {
+      files[name] = raw;
+    } else if (method === 8) {
+      try { files[name] = await inflate(raw); }
+      catch(e) { console.warn('Inflate failed for', name, e); }
+    }
+    i = dstart + csize;
+  }
 
-  const dec      = new TextDecoder();
-  const sheetXml = dec.decode(files[sheetKey]);
-  const ssXml    = ssKey ? dec.decode(files[ssKey]) : '';
+  if (!Object.keys(files).length) {
+    showToast('❌ File is not a valid .xlsx file');
+    return;
+  }
 
-  // Parse shared strings
+  const shKey = Object.keys(files).find(k=>/xl\/worksheets\/sheet1\.xml$/i.test(k));
+  const ssKey = Object.keys(files).find(k=>/sharedStrings\.xml$/i.test(k));
+  const sh2Key= Object.keys(files).find(k=>/xl\/worksheets\/sheet2\.xml$/i.test(k));
+  const sh3Key= Object.keys(files).find(k=>/xl\/worksheets\/sheet3\.xml$/i.test(k));
+
+  if (!shKey) { showToast('❌ No data sheet found in file'); return; }
+
+  // ── 2. Shared strings ──
+  const ssXml = ssKey ? tdec.decode(files[ssKey]) : '';
   const ss = [];
   for (const m of ssXml.matchAll(/<si>[\s\S]*?<\/si>/g)) {
-    const t = (m[0].match(/<t[^>]*>([\s\S]*?)<\/t>/g) || [])
-      .map(x => x.replace(/<[^>]+>/g, '')).join('');
+    const t = (m[0].match(/<t[^>]*>([\s\S]*?)<\/t>/g)||[]).map(x=>x.replace(/<[^>]+>/g,'')).join('');
     ss.push(t.replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&apos;/g,"'"));
   }
-  return { sheetXml, ss };
-}
 
-function parseSheetRows(data) {
-  if (!data) return [];
-  const { sheetXml, ss } = data;
-  const rows = [];
-  // Sparse cell handling: use cell reference (A1, B3 etc.) to fill gaps
-  for (const rm of sheetXml.matchAll(/<row[^>]*r="(\d+)"[^>]*>([\s\S]*?)<\/row>/g)) {
-    const row = [];
-    for (const cm of rm[2].matchAll(/<c\s([^>]*)>([\s\S]*?)<\/c>/g)) {
-      const attrs    = cm[1];
-      const inner    = cm[2];
-      const refMatch = attrs.match(/r="([A-Z]+)(\d+)"/);
-      const colIdx   = refMatch ? colLetterToIndex(refMatch[1]) : row.length;
-      // Fill sparse gaps with empty strings
-      while (row.length < colIdx) row.push('');
-      const isShared = attrs.includes('t="s"');
-      const vMatch   = inner.match(/<v>([\s\S]*?)<\/v>/);
-      const val      = vMatch ? vMatch[1] : '';
-      row.push(isShared ? (ss[parseInt(val)] || '') : val);
+  // ── 3. Sheet parser ──
+  const colIdx = s => { let n=0; for(const c of s) n=n*26+c.charCodeAt(0)-64; return n-1; };
+  const parseSheet = xml => {
+    const rows=[];
+    for(const rm of xml.matchAll(/<row[^>]*r="(\d+)"[^>]*>([\s\S]*?)<\/row>/g)){
+      const row=[];
+      for(const cm of rm[2].matchAll(/<c\s([^>]*)>([\s\S]*?)<\/c>/g)){
+        const attrs=cm[1], inner=cm[2];
+        const ref=attrs.match(/r="([A-Z]+)\d+"/);
+        const ci=ref?colIdx(ref[1]):row.length;
+        while(row.length<ci) row.push('');
+        const isSS=attrs.includes('t="s"');
+        const vm=inner.match(/<v>([\s\S]*?)<\/v>/);
+        const val=vm?vm[1]:'';
+        row.push(isSS?(ss[parseInt(val)]||''):val);
+      }
+      rows.push(row);
     }
-    rows.push(row);
+    return rows;
+  };
+
+  const rows1 = parseSheet(tdec.decode(files[shKey]));
+  if (!rows1.length || rows1[0][0]!=='Date') {
+    showToast('❌ Invalid format — column A must be "Date"'); return;
   }
-  return rows;
+
+  // ── 4. Parse Trip Log (sheet1) ──
+  const hdr = rows1[0];
+  const col2lc = (hdr[2]||'').toString().toLowerCase();
+  const hasFareCol = col2lc.includes('fare') || col2lc.includes('₹') || /^\d+$/.test(col2lc);
+  const off = hasFareCol ? 1 : 0;
+
+  const importedEntries = {};
+  let tripCount = 0;
+  rows1.slice(1).forEach(row => {
+    const date = (row[0]||'').toString().trim();
+    const name = (row[1]||'').toString().trim();
+    if (!date||!name||!/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+    const mP = (row[2+off]||'').toString().trim();
+    const mPd= (row[3+off]||'').toString().trim();
+    const eP = (row[4+off]||'').toString().trim();
+    const ePd= (row[5+off]||'').toString().trim();
+    if (!importedEntries[date]) importedEntries[date]={};
+    importedEntries[date][name]={
+      mP:   mP==='Present'?'P':mP==='Absent'?'A':'',
+      mPaid:mPd==='Paid'?'Y':mPd==='Pending'?'N':'',
+      eP:   eP==='Present'?'P':eP==='Absent'?'A':'',
+      ePaid:ePd==='Paid'?'Y':ePd==='Pending'?'N':'',
+    };
+    tripCount++;
+  });
+
+  if (!tripCount) { showToast('❌ No trip data found in file'); return; }
+
+  // ── 5. Parse Summary (sheet2) to restore RIDERS ──
+  const importedRiders = [];
+  const rClrs = ['#e879f9','#a855f7','#58a6ff','#3fb950','#fbbf24','#f87171','#34d399','#60a5fa','#fb923c','#a78bfa'];
+  if (sh2Key) {
+    const rows2 = parseSheet(tdec.decode(files[sh2Key]));
+    rows2.slice(1).forEach((row, idx) => {
+      const name = (row[0]||'').toString().trim();
+      if (!name) return;
+      const customFare = parseInt(row[1]) || 0;
+      const fareToUse  = customFare > 0 ? customFare : undefined;
+      const obj = { name, clr: rClrs[idx % rClrs.length] };
+      if (fareToUse) obj.fare = fareToUse;
+      importedRiders.push(obj);
+    });
+  }
+  if (!importedRiders.length) {
+    const seen = new Set();
+    rows1.slice(1).forEach(row => {
+      const n=(row[1]||'').toString().trim();
+      if(n&&!seen.has(n)){seen.add(n);importedRiders.push({name:n,clr:rClrs[seen.size%rClrs.length]});}
+    });
+  }
+
+  // ── 6. Parse Fuel Log (sheet3) ──
+  const importedFuel = [];
+  if (sh3Key) {
+    const rows3 = parseSheet(tdec.decode(files[sh3Key]));
+    rows3.slice(1).forEach(row => {
+      const date   = (row[0]||'').toString().trim();
+      const litres = parseFloat(row[1]);
+      const amount = parseInt(row[2]);
+      const note   = (row[4]||'').toString().trim();
+      if (!date||!litres||!amount||!/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+      importedFuel.push({date, litres, amount, note});
+    });
+  }
+
+  // ── 7. Merge into app state + persist ──
+  Object.entries(importedEntries).forEach(([date, dayData]) => {
+    if (!entries[date]) entries[date]={};
+    Object.assign(entries[date], dayData);
+  });
+  importedRiders.forEach(ir => {
+    if (!RIDERS.find(r=>r.name===ir.name)) RIDERS.push(ir);
+  });
+  importedFuel.forEach(nf => {
+    const exists = fuelEntries.find(f=>f.date===nf.date&&f.amount===nf.amount&&f.litres===nf.litres);
+    if (!exists) fuelEntries.push(nf);
+  });
+  fuelEntries.sort((a,b)=>b.date.localeCompare(a.date));
+
+  localStorage.setItem('rsPWA_entries', JSON.stringify(entries));
+  localStorage.setItem('rsPWA_riders',  JSON.stringify(RIDERS));
+  localStorage.setItem('rsPWA_fuel',    JSON.stringify(fuelEntries));
+  localStorage.setItem('rsPWA_setup',   '1');
+  if (!adminName) { adminName='Admin'; localStorage.setItem('rsPWA_admin','Admin'); }
+
+  entries     = JSON.parse(localStorage.getItem('rsPWA_entries'));
+  RIDERS      = JSON.parse(localStorage.getItem('rsPWA_riders'));
+  fuelEntries = JSON.parse(localStorage.getItem('rsPWA_fuel'));
+
+  stampLastUpdated();
+  activeFilter = null;
+  saveFilter();
+
+  const latestDate  = Object.keys(importedEntries).sort().pop();
+  const latestMonth = latestDate ? latestDate.slice(0,7) : null;
+  if (latestMonth) {
+    const sm = document.getElementById('summaryMonth');
+    const fm = document.getElementById('fuelMonth');
+    const hm = document.getElementById('historyMonth');
+    const sd = document.getElementById('summaryDate');
+    const hd = document.getElementById('historyDate');
+    if (sm) sm.value = latestMonth;
+    if (fm) fm.value = latestMonth;
+    if (hm) hm.value = latestMonth;
+    if (sd) sd.value = '';
+    if (hd) hd.value = '';
+  }
+
+  renderFilterBar();
+  renderRiders();
+  updateStats();
+  goTo('summary');
+  haptic('success');
+
+  const fuelMsg = importedFuel.length ? ` · ${importedFuel.length} fuel` : '';
+  showToast(`✅ Imported! ${tripCount} trips · ${importedRiders.length} riders${fuelMsg}`);
 }
 
 function colLetterToIndex(letters) {
   let n = 0;
   for (const ch of letters) n = n * 26 + ch.charCodeAt(0) - 64;
-  return n - 1; // 0-based
+  return n - 1;
 }
+
 
 // ── HAPTIC ENGINE ─────────────────────────────────────────────
 function haptic(type = 'light') {
@@ -2173,14 +2250,35 @@ window.addEventListener('DOMContentLoaded', () => {
   }, { passive: true });
 });
 
+// ── FORCE UPDATE ──────────────────────────────────────────────
+async function forceUpdate() {
+  showToast('🔄 Clearing cache & updating…');
+  haptic('medium');
+  try {
+    if ('caches' in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+    }
+    if ('serviceWorker' in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.unregister()));
+    }
+  } catch(e) { console.warn(e); }
+  setTimeout(() => location.reload(), 800);
+}
+
 window.addEventListener('DOMContentLoaded', () => {
   document.getElementById('logDate').value = todayStr();
-  // Set month pickers to current month
-  const mo = new Date().toISOString().slice(0,7);
+  // Set month pickers to most recent data month (or current month if no data)
+  const allDates = Object.keys(entries).sort();
+  const fallback = new Date().toISOString().slice(0,7);
+  const mo = allDates.length ? allDates[allDates.length-1].slice(0,7) : fallback;
   const sm = document.getElementById('summaryMonth');
   const fm = document.getElementById('fuelMonth');
+  const hm = document.getElementById('historyMonth');
   if (sm) sm.value = mo;
   if (fm) fm.value = mo;
+  if (hm) hm.value = mo;
 
   renderRiders(); updateStats(); renderFilterBar();
 
@@ -2193,7 +2291,36 @@ window.addEventListener('DOMContentLoaded', () => {
     showPinScreen(false);
   }
 
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  // ── Service Worker: register and auto-update on new version ──
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').then(reg => {
+      // Check for updates every minute and on visibility change
+      reg.update();
+      setInterval(() => reg.update(), 60000);
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update(); });
+
+      // When a new SW is found, install + auto-reload
+      reg.addEventListener('updatefound', () => {
+        const newSW = reg.installing;
+        if (!newSW) return;
+        newSW.addEventListener('statechange', () => {
+          if (newSW.state === 'installed' && navigator.serviceWorker.controller) {
+            // New version ready — activate and reload
+            newSW.postMessage('SKIP_WAITING');
+          }
+        });
+      });
+
+      // When controller changes (new SW took over), reload once
+      let reloaded = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (reloaded) return;
+        reloaded = true;
+        showToast('🔄 Updating to latest version…');
+        setTimeout(() => location.reload(), 600);
+      });
+    }).catch(() => {});
+  }
 });
 </script>
 </body>
