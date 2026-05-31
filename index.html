@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; script-src 'self' 'unsafe-inline'; connect-src 'none'; frame-ancestors 'none'; worker-src blob:;">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self' https://*.supabase.co wss://*.supabase.co; frame-ancestors 'none'; worker-src blob:;">
 <meta http-equiv="X-Content-Type-Options" content="nosniff">
 <meta name="theme-color" content="#0d0a14">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -166,6 +166,14 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .fclear{background:var(--card);border:1.5px solid var(--border);color:var(--muted);border-radius:8px;padding:9px 14px;font-family:Nunito,sans-serif;font-size:12px;font-weight:800;cursor:pointer;align-self:flex-end;height:38px;white-space:nowrap;}
 .fclear:active{transform:scale(0.96);}
 
+/* ── AUTH SCREEN ── */
+.auth-card{background:var(--surface);border:1.5px solid var(--border);border-radius:20px;padding:24px 22px;width:100%;max-width:380px;}
+.auth-links{display:flex;justify-content:space-between;margin-top:16px;font-size:12px;font-weight:700;gap:8px;flex-wrap:wrap;}
+.auth-links a{color:var(--accent);cursor:pointer;text-decoration:none;}
+.auth-links a:hover{text-decoration:underline;}
+.auth-links a:active{opacity:0.6;}
+#authWrap input{width:100%;}
+
 /* INSTALL BANNER */
 .ibanner{background:var(--ad);border:1px solid rgba(168,85,247,.3);border-radius:var(--r);padding:11px 14px;margin-bottom:14px;display:flex;align-items:center;gap:10px;cursor:pointer;}
 .ibanner .ii{font-size:20px;} .ibanner .it{flex:1;} .ibanner .itl{font-size:13px;font-weight:800;color:var(--accent);} .ibanner .isl{font-size:11px;color:var(--muted);} .ibanner .ic{font-size:16px;color:var(--muted);padding:4px;}
@@ -269,6 +277,94 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 </style>
 </head>
 <body>
+<!-- Supabase JS client SDK (loaded from CDN) -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.7/dist/umd/supabase.min.js"></script>
+
+<!-- ── AUTH LOGIN/SIGNUP/RESET SCREEN ── -->
+<div class="pin-wrap" id="authWrap" style="justify-content:flex-start;padding-top:50px;overflow-y:auto;">
+  <div class="pin-logo" style="margin-bottom:24px">
+    <div class="pin-icon">🚗</div>
+    <div class="pin-title">R<span>aax</span></div>
+    <div class="pin-subtitle" id="authSubtitle">SIGN IN TO YOUR ACCOUNT</div>
+  </div>
+
+  <!-- LOGIN FORM -->
+  <div id="authLogin" class="auth-card">
+    <div class="fin">
+      <label>Email</label>
+      <input type="email" id="loginEmail" placeholder="you@example.com" autocomplete="email" autocapitalize="off" style="text-align:left;letter-spacing:0;font-family:Nunito,sans-serif;font-size:15px;font-weight:600;">
+    </div>
+    <div class="fin">
+      <label>Password</label>
+      <input type="password" id="loginPass" placeholder="Your password" autocomplete="current-password" style="text-align:left;letter-spacing:0;font-family:Nunito,sans-serif;font-size:15px;font-weight:600;">
+    </div>
+    <div class="login-err" id="loginErr"></div>
+    <button class="login-btn" id="loginBtn" onclick="doLogin()">Sign In</button>
+    <div class="auth-links">
+      <a onclick="showAuthScreen('forgot')">Forgot password?</a>
+      <a onclick="showAuthScreen('signup')">Create account</a>
+    </div>
+  </div>
+
+  <!-- SIGNUP FORM -->
+  <div id="authSignup" class="auth-card" style="display:none">
+    <div class="fin">
+      <label>Your Name</label>
+      <input type="text" id="signupName" placeholder="Your name" autocapitalize="words" maxlength="30" style="text-align:left;letter-spacing:0;font-family:Nunito,sans-serif;font-size:15px;font-weight:600;">
+    </div>
+    <div class="fin">
+      <label>Email</label>
+      <input type="email" id="signupEmail" placeholder="you@example.com" autocomplete="email" autocapitalize="off" style="text-align:left;letter-spacing:0;font-family:Nunito,sans-serif;font-size:15px;font-weight:600;">
+    </div>
+    <div class="fin">
+      <label>Password (min 6 characters)</label>
+      <input type="password" id="signupPass" placeholder="Create password" autocomplete="new-password" minlength="6" style="text-align:left;letter-spacing:0;font-family:Nunito,sans-serif;font-size:15px;font-weight:600;">
+    </div>
+    <div class="login-err" id="signupErr"></div>
+    <button class="login-btn" id="signupBtn" onclick="doSignup()">Create Account</button>
+    <div class="auth-links">
+      <a onclick="showAuthScreen('login')">← Already have an account? Sign in</a>
+    </div>
+  </div>
+
+  <!-- FORGOT PASSWORD FORM -->
+  <div id="authForgot" class="auth-card" style="display:none">
+    <div style="text-align:center;color:var(--muted);font-size:13px;margin-bottom:14px;line-height:1.5;">
+      Enter your email and we'll send you a link to reset your password.
+    </div>
+    <div class="fin">
+      <label>Email</label>
+      <input type="email" id="forgotEmail" placeholder="you@example.com" autocomplete="email" autocapitalize="off" style="text-align:left;letter-spacing:0;font-family:Nunito,sans-serif;font-size:15px;font-weight:600;">
+    </div>
+    <div class="login-err" id="forgotErr"></div>
+    <button class="login-btn" id="forgotBtn" onclick="doForgot()">Send Reset Email</button>
+    <div class="auth-links">
+      <a onclick="showAuthScreen('login')">← Back to sign in</a>
+    </div>
+  </div>
+
+  <!-- PASSWORD RESET FORM (shown when user clicks reset link from email) -->
+  <div id="authReset" class="auth-card" style="display:none">
+    <div style="text-align:center;color:var(--muted);font-size:13px;margin-bottom:14px;line-height:1.5;">
+      Enter your new password below.
+    </div>
+    <div class="fin">
+      <label>New Password (min 6 characters)</label>
+      <input type="password" id="resetPass" placeholder="New password" autocomplete="new-password" minlength="6" style="text-align:left;letter-spacing:0;font-family:Nunito,sans-serif;font-size:15px;font-weight:600;">
+    </div>
+    <div class="fin">
+      <label>Confirm New Password</label>
+      <input type="password" id="resetPass2" placeholder="Repeat new password" autocomplete="new-password" minlength="6" style="text-align:left;letter-spacing:0;font-family:Nunito,sans-serif;font-size:15px;font-weight:600;">
+    </div>
+    <div class="login-err" id="resetErr"></div>
+    <button class="login-btn" id="resetBtn" onclick="doReset()">Update Password</button>
+  </div>
+
+  <div style="margin-top:30px;font-size:11px;color:var(--muted);font-weight:700;text-align:center;letter-spacing:1px;text-transform:uppercase;">
+    ☁️ Cloud sync · 🔐 Encrypted · 📱 Works offline
+  </div>
+</div>
+
 <!-- ── PIN LOGIN SCREEN ── -->
 <div class="pin-wrap" id="pinWrap">
   <div class="pin-logo">
@@ -539,6 +635,22 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
       </div>
       <input type="file" id="importFile" accept=".xlsx" style="display:none" onchange="importExcel(this)">
 
+      <div class="sl" style="margin-top:20px">Account</div>
+      <div class="scard">
+        <div class="srow" id="accountInfoRow" style="cursor:default;">
+          <span class="sri">👤</span>
+          <div class="srt">
+            <div class="srn" id="accountEmail">Local mode</div>
+            <div class="srd" id="accountStatus">Not signed in</div>
+          </div>
+        </div>
+        <div class="srow danger" id="signOutRow" onclick="doCloudLogout()" style="display:none;">
+          <span class="sri">🚪</span>
+          <div class="srt"><div class="srn">Sign Out</div><div class="srd">Sign out of your cloud account</div></div>
+          <span class="srr">›</span>
+        </div>
+      </div>
+
       <div class="sl" style="margin-top:20px">App</div>
       <div class="scard">
         <div class="srow" onclick="forceUpdate()">
@@ -548,7 +660,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         </div>
       </div>
 
-      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v2.7 · 19 May 2026 — Your data stays on your device</div>
+      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.0 — ☁️ Cloud Edition</div>
     </div>
 
   </div>
@@ -676,6 +788,318 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 </div>
 
 <script>
+// ═══════════════════════════════════════════════════════════════
+// ── CLOUD LAYER (Supabase auth + database) ─────────────────────
+// ═══════════════════════════════════════════════════════════════
+
+// ⚠️ PASTE YOUR SUPABASE CREDENTIALS HERE
+// Get them from: Supabase Dashboard → Settings → API
+const SUPABASE_URL  = 'https://kqyaczklqvfiglendrim.supabase.co/';
+const SUPABASE_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtxeWFjemtscXZmaWdsZW5kcmltIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAyMjc1MjAsImV4cCI6MjA5NTgwMzUyMH0.zR_rtd8S8HIXIFiMWnfW3-gF1BlmllZEot9pELaSSsg';
+
+let sb = null;             // Supabase client
+let CURRENT_USER = null;   // Logged-in user object
+let CLOUD_READY = false;   // True when credentials are configured
+
+function isCloudConfigured() {
+  return SUPABASE_URL && SUPABASE_KEY
+    && SUPABASE_URL.startsWith('https://')
+    && !SUPABASE_URL.includes('PASTE_')
+    && SUPABASE_KEY.length > 40;
+}
+
+function initCloud() {
+  if (!isCloudConfigured()) {
+    console.warn('Supabase not configured — running in local-only mode');
+    return false;
+  }
+  try {
+    sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+      auth: { persistSession: true, autoRefreshToken: true }
+    });
+    CLOUD_READY = true;
+    return true;
+  } catch (e) {
+    console.error('Supabase init failed:', e);
+    return false;
+  }
+}
+
+// ── AUTH UI SWITCHING ─────────────────────────────────────────
+function showAuthScreen(which) {
+  ['Login','Signup','Forgot','Reset'].forEach(s =>
+    document.getElementById('auth'+s).style.display = 'none'
+  );
+  const sub = document.getElementById('authSubtitle');
+  const labels = { login:'SIGN IN TO YOUR ACCOUNT', signup:'CREATE YOUR ACCOUNT',
+                   forgot:'RESET YOUR PASSWORD', reset:'SET A NEW PASSWORD' };
+  sub.textContent = labels[which] || labels.login;
+  document.getElementById('auth' + which.charAt(0).toUpperCase() + which.slice(1)).style.display = 'block';
+}
+
+function showAuthWrap() { document.getElementById('authWrap').classList.add('show'); }
+function hideAuthWrap() { document.getElementById('authWrap').classList.remove('show'); }
+
+// ── LOGIN ─────────────────────────────────────────────────────
+async function doLogin() {
+  if (!CLOUD_READY) { showToast('⚠️ Cloud not configured. See setup guide.'); return; }
+  const email = document.getElementById('loginEmail').value.trim();
+  const pass  = document.getElementById('loginPass').value;
+  const err   = document.getElementById('loginErr');
+  const btn   = document.getElementById('loginBtn');
+  err.textContent = '';
+
+  if (!email || !pass) { err.textContent = 'Email and password required.'; return; }
+
+  btn.disabled = true; btn.textContent = 'Signing in…';
+  const { data, error } = await sb.auth.signInWithPassword({ email, password: pass });
+  btn.disabled = false; btn.textContent = 'Sign In';
+  if (error) { err.textContent = error.message; haptic('error'); return; }
+
+  CURRENT_USER = data.user;
+  haptic('success');
+  showToast('✅ Welcome back!');
+  await onAuthSuccess();
+}
+
+// ── SIGNUP ────────────────────────────────────────────────────
+async function doSignup() {
+  if (!CLOUD_READY) { showToast('⚠️ Cloud not configured. See setup guide.'); return; }
+  const name  = document.getElementById('signupName').value.trim();
+  const email = document.getElementById('signupEmail').value.trim();
+  const pass  = document.getElementById('signupPass').value;
+  const err   = document.getElementById('signupErr');
+  const btn   = document.getElementById('signupBtn');
+  err.textContent = '';
+
+  if (!name)        { err.textContent = 'Please enter your name.'; return; }
+  if (!email)       { err.textContent = 'Email required.'; return; }
+  if (!pass || pass.length < 6) { err.textContent = 'Password must be at least 6 characters.'; return; }
+
+  btn.disabled = true; btn.textContent = 'Creating account…';
+  const { data, error } = await sb.auth.signUp({
+    email, password: pass,
+    options: { data: { name } }
+  });
+  btn.disabled = false; btn.textContent = 'Create Account';
+
+  if (error) { err.textContent = error.message; haptic('error'); return; }
+
+  if (data.user && !data.session) {
+    // Email confirmation required
+    showToast('📧 Check your email to confirm and sign in');
+    showAuthScreen('login');
+  } else if (data.session) {
+    CURRENT_USER = data.user;
+    haptic('success');
+    showToast('🎉 Account created!');
+    await onAuthSuccess(name);
+  }
+}
+
+// ── FORGOT PASSWORD ───────────────────────────────────────────
+async function doForgot() {
+  if (!CLOUD_READY) { showToast('⚠️ Cloud not configured. See setup guide.'); return; }
+  const email = document.getElementById('forgotEmail').value.trim();
+  const err   = document.getElementById('forgotErr');
+  const btn   = document.getElementById('forgotBtn');
+  err.textContent = '';
+
+  if (!email) { err.textContent = 'Enter your email.'; return; }
+
+  btn.disabled = true; btn.textContent = 'Sending…';
+  const { error } = await sb.auth.resetPasswordForEmail(email, {
+    redirectTo: window.location.origin + window.location.pathname + '#reset'
+  });
+  btn.disabled = false; btn.textContent = 'Send Reset Email';
+
+  if (error) { err.textContent = error.message; haptic('error'); return; }
+
+  haptic('success');
+  showToast('📧 Reset link sent! Check your inbox.');
+  setTimeout(() => showAuthScreen('login'), 1500);
+}
+
+// ── RESET PASSWORD (after clicking link in email) ─────────────
+async function doReset() {
+  if (!CLOUD_READY) return;
+  const p1  = document.getElementById('resetPass').value;
+  const p2  = document.getElementById('resetPass2').value;
+  const err = document.getElementById('resetErr');
+  const btn = document.getElementById('resetBtn');
+  err.textContent = '';
+
+  if (!p1 || p1.length < 6) { err.textContent = 'Password must be at least 6 characters.'; return; }
+  if (p1 !== p2)            { err.textContent = 'Passwords do not match.'; return; }
+
+  btn.disabled = true; btn.textContent = 'Updating…';
+  const { error } = await sb.auth.updateUser({ password: p1 });
+  btn.disabled = false; btn.textContent = 'Update Password';
+  if (error) { err.textContent = error.message; haptic('error'); return; }
+
+  haptic('success');
+  showToast('✅ Password updated! Please sign in.');
+  // Sign out and return to login
+  await sb.auth.signOut();
+  CURRENT_USER = null;
+  showAuthScreen('login');
+}
+
+// ── LOGOUT ────────────────────────────────────────────────────
+async function doCloudLogout() {
+  if (sb) await sb.auth.signOut();
+  CURRENT_USER = null;
+  // Clear local cache but keep credentials
+  showToast('👋 Signed out');
+  setTimeout(() => location.reload(), 600);
+}
+
+// ── AFTER AUTH SUCCESS — LOAD DATA & MIGRATE IF NEEDED ────────
+async function onAuthSuccess(signupName) {
+  hideAuthWrap();
+  await loadCloudData();
+
+  // If user just signed up and has local data, offer migration
+  const hasLocal = (RIDERS.length || Object.keys(entries).length || fuelEntries.length);
+  const hasCloud = (RIDERS.length > 0);
+  if (hasLocal && !hasCloud) {
+    showConfirm(
+      '☁️ Migrate local data?',
+      'Found data from before. Upload to cloud?',
+      () => migrateLocalToCloud()
+    );
+  }
+
+  if (signupName) {
+    adminName = signupName;
+    await cloudSaveSettings();
+  }
+
+  renderRiders(); updateStats(); renderFilterBar();
+  goTo('log');
+}
+
+// ── LOAD ALL DATA FROM CLOUD ──────────────────────────────────
+async function loadCloudData() {
+  if (!CURRENT_USER) return;
+  try {
+    // Settings
+    const { data: s } = await sb.from('settings').select('*').eq('user_id', CURRENT_USER.id).single();
+    if (s) {
+      adminName = s.admin_name || 'Admin';
+      FARE = s.default_fare || 75;
+    }
+
+    // Riders
+    const { data: rs } = await sb.from('riders').select('*').eq('user_id', CURRENT_USER.id).order('created_at');
+    RIDERS = (rs || []).map(r => ({ name: r.name, clr: r.color, fare: r.fare || undefined }));
+
+    // Trip entries
+    const { data: ts } = await sb.from('trip_entries').select('*').eq('user_id', CURRENT_USER.id);
+    entries = {};
+    (ts || []).forEach(t => {
+      if (!entries[t.trip_date]) entries[t.trip_date] = {};
+      entries[t.trip_date][t.rider_name] = {
+        mP: t.m_present || '', mPaid: t.m_paid || '',
+        eP: t.e_present || '', ePaid: t.e_paid || '',
+      };
+    });
+
+    // Fuel entries
+    const { data: fs } = await sb.from('fuel_entries').select('*').eq('user_id', CURRENT_USER.id).order('fuel_date', { ascending: false });
+    fuelEntries = (fs || []).map(f => ({ date: f.fuel_date, litres: parseFloat(f.litres), amount: f.amount, note: f.note || '' }));
+
+  } catch (e) {
+    console.error('Load failed:', e);
+    showToast('⚠️ Could not load cloud data');
+  }
+}
+
+// ── SAVE FUNCTIONS (push to cloud) ────────────────────────────
+async function cloudSaveSettings() {
+  if (!CURRENT_USER || !sb) return;
+  await sb.from('settings').upsert({
+    user_id: CURRENT_USER.id, admin_name: adminName, default_fare: FARE, updated_at: new Date().toISOString()
+  });
+}
+
+async function cloudUpsertRider(r) {
+  if (!CURRENT_USER || !sb) return;
+  await sb.from('riders').upsert({
+    user_id: CURRENT_USER.id, name: r.name, color: r.clr, fare: r.fare || null
+  }, { onConflict: 'user_id,name' });
+}
+
+async function cloudDeleteRider(name) {
+  if (!CURRENT_USER || !sb) return;
+  await sb.from('riders').delete().eq('user_id', CURRENT_USER.id).eq('name', name);
+}
+
+async function cloudSaveTripEntry(date, riderName, d) {
+  if (!CURRENT_USER || !sb) return;
+  await sb.from('trip_entries').upsert({
+    user_id: CURRENT_USER.id, trip_date: date, rider_name: riderName,
+    m_present: d.mP||'', m_paid: d.mPaid||'', e_present: d.eP||'', e_paid: d.ePaid||'',
+    updated_at: new Date().toISOString()
+  }, { onConflict: 'user_id,rider_name,trip_date' });
+}
+
+async function cloudSaveFuel(f) {
+  if (!CURRENT_USER || !sb) return;
+  await sb.from('fuel_entries').insert({
+    user_id: CURRENT_USER.id, fuel_date: f.date, litres: f.litres, amount: f.amount, note: f.note || null
+  });
+}
+
+async function cloudDeleteFuel(date, amount, litres) {
+  if (!CURRENT_USER || !sb) return;
+  await sb.from('fuel_entries').delete()
+    .eq('user_id', CURRENT_USER.id).eq('fuel_date', date).eq('amount', amount).eq('litres', litres);
+}
+
+// ── MIGRATE LOCAL DATA TO CLOUD ───────────────────────────────
+async function migrateLocalToCloud() {
+  if (!CURRENT_USER) return;
+  showToast('☁️ Uploading data to cloud…');
+  try {
+    if (RIDERS.length) {
+      const rows = RIDERS.map(r => ({ user_id: CURRENT_USER.id, name: r.name, color: r.clr, fare: r.fare || null }));
+      await sb.from('riders').upsert(rows, { onConflict: 'user_id,name' });
+    }
+    const tripRows = [];
+    Object.entries(entries).forEach(([date, day]) => {
+      Object.entries(day).forEach(([name, d]) => {
+        if (!d.mP && !d.eP) return;
+        tripRows.push({
+          user_id: CURRENT_USER.id, trip_date: date, rider_name: name,
+          m_present: d.mP||'', m_paid: d.mPaid||'', e_present: d.eP||'', e_paid: d.ePaid||''
+        });
+      });
+    });
+    if (tripRows.length) {
+      // Upsert in batches of 500
+      for (let i = 0; i < tripRows.length; i += 500) {
+        await sb.from('trip_entries').upsert(tripRows.slice(i, i+500), { onConflict: 'user_id,rider_name,trip_date' });
+      }
+    }
+    if (fuelEntries.length) {
+      const rows = fuelEntries.map(f => ({ user_id: CURRENT_USER.id, fuel_date: f.date, litres: f.litres, amount: f.amount, note: f.note || null }));
+      await sb.from('fuel_entries').insert(rows);
+    }
+    await cloudSaveSettings();
+    showToast('✅ Migration complete!');
+    await loadCloudData();
+    renderRiders(); updateStats();
+  } catch(e) {
+    console.error('Migration error:', e);
+    showToast('⚠️ Migration failed — see console');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// END OF CLOUD LAYER
+// ═══════════════════════════════════════════════════════════════
+
 let FARE = parseInt(localStorage.getItem('rsPWA_fare') || '75');
 function saveFareSetting() {
   const input = document.getElementById('fareInput');
@@ -686,6 +1110,7 @@ function saveFareSetting() {
   localStorage.setItem('rsPWA_fare', String(val));
   updateStats();
   showToast('💰 Fare updated to ₹' + val);
+  if (CLOUD_READY && CURRENT_USER) cloudSaveSettings().catch(()=>{});
 }
 const COLORS = ['#e879f9','#a855f7','#58a6ff','#3fb950','#fbbf24','#f87171','#34d399','#60a5fa','#fb923c','#a78bfa'];
 
@@ -694,7 +1119,13 @@ let RIDERS       = JSON.parse(localStorage.getItem('rsPWA_riders')  || '[]');
 let activeFilter = JSON.parse(localStorage.getItem('rsPWA_filter')  || 'null'); // null = show all
 let adminName    = localStorage.getItem('rsPWA_admin') || '';
 
-function saveRiders()  { localStorage.setItem('rsPWA_riders',  JSON.stringify(RIDERS)); }
+function saveRiders()  {
+  localStorage.setItem('rsPWA_riders',  JSON.stringify(RIDERS));
+  // Push to cloud (async)
+  if (CLOUD_READY && CURRENT_USER) {
+    RIDERS.forEach(r => cloudUpsertRider(r).catch(()=>{}));
+  }
+}
 function saveFilter()  { localStorage.setItem('rsPWA_filter',  JSON.stringify(activeFilter)); }
 function saveAdmin(n)  { localStorage.setItem('rsPWA_admin',   n); }
 
@@ -1217,6 +1648,8 @@ function tog(rider,field,val) {
   if(field==='mP'&&day[rider][field]!=='P') day[rider].mPaid='';
   if(field==='eP'&&day[rider][field]!=='P') day[rider].ePaid='';
   save(); renderRiders(); updateStats();
+  // Push to cloud (async, doesn't block UI)
+  if (CLOUD_READY && CURRENT_USER) cloudSaveTripEntry(date, rider, day[rider]).catch(()=>{});
 }
 function onDateChange(){renderRiders();}
 function saveEntry(){
@@ -1543,6 +1976,9 @@ function deleteRider(){
     // Sync the in-memory RIDERS to localStorage version
     RIDERS = JSON.parse(localStorage.getItem('rsPWA_riders') || '[]');
 
+    // Remove from cloud too
+    if (CLOUD_READY && CURRENT_USER) cloudDeleteRider(r.name).catch(()=>{});
+
     // Remove rider's photo if exists
     if (photos[r.name]) { delete photos[r.name]; saveP(); }
 
@@ -1598,6 +2034,19 @@ function goTo(name){
     renderLastUpdated();
     const fi = document.getElementById('fareInput');
     if (fi) fi.value = FARE;
+    // Update account info
+    const emailEl  = document.getElementById('accountEmail');
+    const statusEl = document.getElementById('accountStatus');
+    const signOut  = document.getElementById('signOutRow');
+    if (CURRENT_USER) {
+      emailEl.textContent  = CURRENT_USER.email;
+      statusEl.textContent = '☁️ Synced to cloud · ' + (adminName || 'Admin');
+      signOut.style.display = 'flex';
+    } else {
+      emailEl.textContent  = 'Local mode';
+      statusEl.textContent = isCloudConfigured() ? 'Not signed in' : 'Cloud not configured';
+      signOut.style.display = 'none';
+    }
   }
 }
 function clearAll(){
@@ -1623,7 +2072,10 @@ function formatDate(str){
 let fuelEntries    = JSON.parse(localStorage.getItem('rsPWA_fuel') || '[]');
 let editingFuelIdx = null;
 
-function saveFuel() { localStorage.setItem('rsPWA_fuel', JSON.stringify(fuelEntries)); }
+function saveFuel() {
+  localStorage.setItem('rsPWA_fuel', JSON.stringify(fuelEntries));
+  // Note: individual cloud writes happen in saveFuelEntry/deleteFuelEntry
+}
 
 function currentFuelMonth() {
   const el = document.getElementById('fuelMonth');
@@ -1674,25 +2126,32 @@ function saveFuelEntry() {
   if (editingFuelIdx === null) {
     fuelEntries.push(entry);
     showToast('⛽ Fill-up added!');
+    if (CLOUD_READY && CURRENT_USER) cloudSaveFuel(entry).catch(()=>{});
   } else {
+    const oldEntry = fuelEntries[editingFuelIdx];
     fuelEntries[editingFuelIdx] = entry;
     showToast('⛽ Fill-up updated!');
+    if (CLOUD_READY && CURRENT_USER) {
+      cloudDeleteFuel(oldEntry.date, oldEntry.amount, oldEntry.litres)
+        .then(() => cloudSaveFuel(entry)).catch(()=>{});
+    }
   }
   // Sort by date descending
   fuelEntries.sort((a,b) => b.date.localeCompare(a.date));
   saveFuel();
   closeFuelModal();
   renderFuel();
-  // refresh summary if open
   if (document.getElementById('screen-summary').classList.contains('active')) renderSummary();
 }
 
 function deleteFuelEntry() {
   if (editingFuelIdx === null) return;
   showConfirm('Delete this fill-up?', 'This cannot be undone.', () => {
+    const oldEntry = fuelEntries[editingFuelIdx];
     fuelEntries.splice(editingFuelIdx, 1);
     saveFuel(); closeFuelModal(); renderFuel();
     if (document.getElementById('screen-summary').classList.contains('active')) renderSummary();
+    if (CLOUD_READY && CURRENT_USER && oldEntry) cloudDeleteFuel(oldEntry.date, oldEntry.amount, oldEntry.litres).catch(()=>{});
     showToast('🗑️ Fill-up deleted');
   });
 }
@@ -2305,7 +2764,7 @@ async function forceUpdate() {
   setTimeout(() => location.reload(), 800);
 }
 
-window.addEventListener('DOMContentLoaded', () => {
+window.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('logDate').value = todayStr();
   // Set month pickers to most recent data month (or current month if no data)
   const allDates = Object.keys(entries).sort();
@@ -2320,36 +2779,60 @@ window.addEventListener('DOMContentLoaded', () => {
 
   renderRiders(); updateStats(); renderFilterBar();
 
-  // Auth / setup flow
-  if (!getPin()) {
-    showPinScreen(true);
-  } else if (!isSetupDone()) {
-    showSetupWizard();
-  } else if (!isLoggedIn()) {
-    showPinScreen(false);
+  // ── Cloud Mode (Supabase) ──
+  if (initCloud()) {
+    // Check if user clicked password reset link (URL has #reset)
+    if (location.hash === '#reset' || location.hash.includes('type=recovery')) {
+      showAuthWrap();
+      showAuthScreen('reset');
+      // Clean URL
+      history.replaceState(null, '', location.pathname);
+    } else {
+      // Check existing session
+      const { data: { session } } = await sb.auth.getSession();
+      if (session && session.user) {
+        CURRENT_USER = session.user;
+        await loadCloudData();
+        renderRiders(); updateStats(); renderFilterBar();
+      } else {
+        showAuthWrap();
+        showAuthScreen('login');
+      }
+    }
+    // Listen for auth state changes (sign out from another tab, token refresh)
+    sb.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT') {
+        CURRENT_USER = null;
+        showAuthWrap();
+        showAuthScreen('login');
+      }
+    });
+  } else {
+    // Cloud not configured — fall back to legacy PIN auth
+    if (!getPin()) {
+      showPinScreen(true);
+    } else if (!isSetupDone()) {
+      showSetupWizard();
+    } else if (!isLoggedIn()) {
+      showPinScreen(false);
+    }
   }
 
   // ── Service Worker: register and auto-update on new version ──
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').then(reg => {
-      // Check for updates every minute and on visibility change
       reg.update();
       setInterval(() => reg.update(), 60000);
       document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update(); });
-
-      // When a new SW is found, install + auto-reload
       reg.addEventListener('updatefound', () => {
         const newSW = reg.installing;
         if (!newSW) return;
         newSW.addEventListener('statechange', () => {
           if (newSW.state === 'installed' && navigator.serviceWorker.controller) {
-            // New version ready — activate and reload
             newSW.postMessage('SKIP_WAITING');
           }
         });
       });
-
-      // When controller changes (new SW took over), reload once
       let reloaded = false;
       navigator.serviceWorker.addEventListener('controllerchange', () => {
         if (reloaded) return;
