@@ -1,5 +1,5 @@
 // Bump CACHE version on every release to force update
-const CACHE = 'raax-v8-2026-05-31-cloud';
+const CACHE = 'raax-v13-username-mpin-email';
 
 const STATIC_ASSETS = [
   './manifest.json',
