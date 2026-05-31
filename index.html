@@ -1,9 +1,10 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self' https://*.supabase.co wss://*.supabase.co; frame-ancestors 'none'; worker-src blob:;">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; connect-src 'self' https://*.supabase.co wss://*.supabase.co; worker-src 'self' blob:;">
 <meta http-equiv="X-Content-Type-Options" content="nosniff">
 <meta name="theme-color" content="#0d0a14">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -660,7 +661,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         </div>
       </div>
 
-      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.0 — ☁️ Cloud Edition</div>
+      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.0.4 — ☁️ Cloud Edition</div>
     </div>
 
   </div>
@@ -794,8 +795,9 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 
 // ⚠️ PASTE YOUR SUPABASE CREDENTIALS HERE
 // Get them from: Supabase Dashboard → Settings → API
-const SUPABASE_URL  = 'https://kqyaczklqvfiglendrim.supabase.co/';
+const SUPABASE_URL  = 'https://kqyaczklqvfiglendrim.supabase.co';
 const SUPABASE_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtxeWFjemtscXZmaWdsZW5kcmltIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAyMjc1MjAsImV4cCI6MjA5NTgwMzUyMH0.zR_rtd8S8HIXIFiMWnfW3-gF1BlmllZEot9pELaSSsg';
+
 
 let sb = null;             // Supabase client
 let CURRENT_USER = null;   // Logged-in user object
@@ -814,10 +816,14 @@ function initCloud() {
     return false;
   }
   try {
-    sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+    // Strip trailing slashes and whitespace — Supabase SDK builds URLs by appending paths
+    const cleanUrl = SUPABASE_URL.trim().replace(/\/+$/, '');
+    const cleanKey = SUPABASE_KEY.trim();
+    sb = window.supabase.createClient(cleanUrl, cleanKey, {
       auth: { persistSession: true, autoRefreshToken: true }
     });
     CLOUD_READY = true;
+    console.log('[Cloud] Connected to', cleanUrl);
     return true;
   } catch (e) {
     console.error('Supabase init failed:', e);
@@ -854,7 +860,20 @@ async function doLogin() {
   btn.disabled = true; btn.textContent = 'Signing in…';
   const { data, error } = await sb.auth.signInWithPassword({ email, password: pass });
   btn.disabled = false; btn.textContent = 'Sign In';
-  if (error) { err.textContent = error.message; haptic('error'); return; }
+  if (error) {
+    // Friendlier error messages
+    let msg = error.message;
+    if (msg.toLowerCase().includes('invalid login')) {
+      msg = 'Wrong email or password. New here? Tap "Create account".';
+    } else if (msg.toLowerCase().includes('email not confirmed')) {
+      msg = 'Please check your inbox and click the confirmation link first.';
+    } else if (msg.toLowerCase().includes('fetch')) {
+      msg = 'No internet, or wrong Supabase URL. Check the URL in the code.';
+    }
+    err.textContent = msg;
+    haptic('error');
+    return;
+  }
 
   CURRENT_USER = data.user;
   haptic('success');
@@ -983,35 +1002,60 @@ async function onAuthSuccess(signupName) {
 async function loadCloudData() {
   if (!CURRENT_USER) return;
   try {
-    // Settings
-    const { data: s } = await sb.from('settings').select('*').eq('user_id', CURRENT_USER.id).single();
+    // ── Settings ──
+    const { data: s, error: se } = await sb.from('settings').select('*').eq('user_id', CURRENT_USER.id).single();
+    if (se) console.warn('Settings load error:', se);
     if (s) {
       adminName = s.admin_name || 'Admin';
-      FARE = s.default_fare || 75;
+      FARE     = s.default_fare || 75;
     }
 
-    // Riders
-    const { data: rs } = await sb.from('riders').select('*').eq('user_id', CURRENT_USER.id).order('created_at');
-    RIDERS = (rs || []).map(r => ({ name: r.name, clr: r.color, fare: r.fare || undefined }));
+    // ── Riders ──
+    const { data: rs, error: re } = await sb.from('riders').select('*').eq('user_id', CURRENT_USER.id).order('created_at');
+    if (re) { console.warn('Riders load error:', re); throw re; }
+    const loadedRiders = (rs || []).map(r => ({ name: r.name, clr: r.color, fare: r.fare || undefined }));
 
-    // Trip entries
-    const { data: ts } = await sb.from('trip_entries').select('*').eq('user_id', CURRENT_USER.id);
-    entries = {};
-    (ts || []).forEach(t => {
-      if (!entries[t.trip_date]) entries[t.trip_date] = {};
-      entries[t.trip_date][t.rider_name] = {
-        mP: t.m_present || '', mPaid: t.m_paid || '',
-        eP: t.e_present || '', ePaid: t.e_paid || '',
-      };
-    });
+    // ── Trip entries (paginated to handle >1000 rows) ──
+    const loadedEntries = {};
+    let from = 0, batch = 1000;
+    while (true) {
+      const { data: ts, error: te } = await sb.from('trip_entries')
+        .select('*').eq('user_id', CURRENT_USER.id)
+        .range(from, from + batch - 1);
+      if (te) { console.warn('Trip entries load error:', te); throw te; }
+      if (!ts || !ts.length) break;
+      ts.forEach(t => {
+        if (!loadedEntries[t.trip_date]) loadedEntries[t.trip_date] = {};
+        loadedEntries[t.trip_date][t.rider_name] = {
+          mP: t.m_present || '', mPaid: t.m_paid || '',
+          eP: t.e_present || '', ePaid: t.e_paid || '',
+        };
+      });
+      if (ts.length < batch) break;
+      from += batch;
+    }
 
-    // Fuel entries
-    const { data: fs } = await sb.from('fuel_entries').select('*').eq('user_id', CURRENT_USER.id).order('fuel_date', { ascending: false });
-    fuelEntries = (fs || []).map(f => ({ date: f.fuel_date, litres: parseFloat(f.litres), amount: f.amount, note: f.note || '' }));
+    // ── Fuel entries ──
+    const { data: fs, error: fe } = await sb.from('fuel_entries')
+      .select('*').eq('user_id', CURRENT_USER.id)
+      .order('fuel_date', { ascending: false });
+    if (fe) { console.warn('Fuel load error:', fe); throw fe; }
+    const loadedFuel = (fs || []).map(f => ({ date: f.fuel_date, litres: parseFloat(f.litres), amount: f.amount, note: f.note || '' }));
+
+    // ── Only commit to memory + localStorage if ALL queries succeeded ──
+    RIDERS      = loadedRiders;
+    entries     = loadedEntries;
+    fuelEntries = loadedFuel;
+    localStorage.setItem('rsPWA_riders',  JSON.stringify(RIDERS));
+    localStorage.setItem('rsPWA_entries', JSON.stringify(entries));
+    localStorage.setItem('rsPWA_fuel',    JSON.stringify(fuelEntries));
+
+    console.log(`[Cloud] Loaded ${RIDERS.length} riders, ${Object.keys(entries).length} dates, ${fuelEntries.length} fuel entries`);
 
   } catch (e) {
-    console.error('Load failed:', e);
-    showToast('⚠️ Could not load cloud data');
+    console.error('[Cloud] Load failed — keeping local data:', e);
+    showToast('⚠️ Cloud load failed — using cached data');
+    // Do NOT wipe anything. Keep whatever is in memory/localStorage.
   }
 }
 
@@ -1966,36 +2010,82 @@ function saveRider(){
   updateStats();
 }
 
-function deleteRider(){
+async function deleteRider(){
   if (editingRiderIdx === null) return;
   const r = RIDERS[editingRiderIdx];
-  showConfirm('Remove ' + r.name + '?', 'Their trip history will be kept but no longer shown.', () => {
-    // Remove from RIDERS array
-    RIDERS.splice(editingRiderIdx, 1);
-    saveRiders();
-    // Sync the in-memory RIDERS to localStorage version
-    RIDERS = JSON.parse(localStorage.getItem('rsPWA_riders') || '[]');
+  if (!r || !r.name || !r.name.trim()) {
+    showToast('❌ Invalid rider'); return;
+  }
+  const riderName = r.name; // capture safely before any state changes
 
-    // Remove from cloud too
-    if (CLOUD_READY && CURRENT_USER) cloudDeleteRider(r.name).catch(()=>{});
+  // Count their trip data
+  let tripCount = 0;
+  Object.values(entries).forEach(day => {
+    if (day[riderName] && (day[riderName].mP || day[riderName].eP)) tripCount++;
+  });
 
-    // Remove rider's photo if exists
-    if (photos[r.name]) { delete photos[r.name]; saveP(); }
+  const detail = tripCount > 0
+    ? `This will also permanently delete ${tripCount} trip ${tripCount===1?'entry':'entries'} for ${riderName}.`
+    : `${riderName} has no trip data.`;
 
-    // Close modal first
-    closeRiderModal();
+  showConfirm('Remove ' + riderName + '?', detail, async () => {
+    try {
+      // Close modal early so UI feels responsive
+      closeRiderModal();
+      showToast('⏳ Deleting ' + riderName + '…');
 
-    // Re-render EVERY screen that shows rider data
-    renderRidersList();
-    renderRiders();
-    renderFilterBar();
-    updateStats();
-    if (document.getElementById('screen-history').classList.contains('active'))  renderHistory();
-    if (document.getElementById('screen-summary').classList.contains('active'))  renderSummary();
-    if (document.getElementById('screen-fuel').classList.contains('active'))     renderFuel();
+      // ── 1. CLOUD FIRST (verify ops succeed before touching local data) ──
+      if (CLOUD_READY && CURRENT_USER) {
+        // Delete trip entries for this rider only
+        const { error: te } = await sb.from('trip_entries').delete()
+          .eq('user_id', CURRENT_USER.id)
+          .eq('rider_name', riderName);
+        if (te) { console.error('Trip delete failed:', te); throw te; }
 
-    haptic('medium');
-    showToast('🗑️ ' + r.name + ' removed');
+        // Delete the rider row
+        const { error: re } = await sb.from('riders').delete()
+          .eq('user_id', CURRENT_USER.id)
+          .eq('name', riderName);
+        if (re) { console.error('Rider delete failed:', re); throw re; }
+      }
+
+      // ── 2. LOCAL — remove from RIDERS array ──
+      const idx = RIDERS.findIndex(x => x.name === riderName);
+      if (idx >= 0) RIDERS.splice(idx, 1);
+      localStorage.setItem('rsPWA_riders', JSON.stringify(RIDERS));
+
+      // ── 3. LOCAL — remove their trip data from entries{} ──
+      Object.keys(entries).forEach(date => {
+        if (entries[date][riderName]) {
+          delete entries[date][riderName];
+          // If this date now has no riders left, remove the date entirely
+          if (Object.keys(entries[date]).length === 0) delete entries[date];
+        }
+      });
+      localStorage.setItem('rsPWA_entries', JSON.stringify(entries));
+
+      // ── 4. LOCAL — remove their photo ──
+      if (photos[riderName]) { delete photos[riderName]; saveP(); }
+
+      // ── 5. Re-render every screen ──
+      renderRidersList();
+      renderRiders();
+      renderFilterBar();
+      updateStats();
+      if (document.getElementById('screen-history').classList.contains('active'))  renderHistory();
+      if (document.getElementById('screen-summary').classList.contains('active'))  renderSummary();
+      if (document.getElementById('screen-fuel').classList.contains('active'))     renderFuel();
+
+      haptic('medium');
+      showToast(tripCount > 0
+        ? `🗑️ ${riderName} & ${tripCount} entries deleted`
+        : `🗑️ ${riderName} removed`);
+
+    } catch(err) {
+      console.error('Delete failed:', err);
+      showToast('❌ Delete failed — try again: ' + (err.message || err));
+      haptic('error');
+    }
   });
 }
 
@@ -2050,10 +2140,18 @@ function goTo(name){
   }
 }
 function clearAll(){
-  showConfirm('🗑️ Delete ALL data?', 'This cannot be undone. Trip logs and fuel entries will be deleted.', () => {
+  showConfirm('🗑️ Delete ALL data?', 'This permanently deletes ALL trip logs and fuel entries from cloud + local. Riders stay.', async () => {
     entries={}; save();
     fuelEntries=[]; saveFuel();
+    if (CLOUD_READY && CURRENT_USER) {
+      try {
+        await sb.from('trip_entries').delete().eq('user_id', CURRENT_USER.id);
+        await sb.from('fuel_entries').delete().eq('user_id', CURRENT_USER.id);
+      } catch(e) { console.warn('Cloud clear failed:', e); }
+    }
     renderRiders(); updateStats(); renderFuel();
+    if (document.getElementById('screen-history').classList.contains('active'))  renderHistory();
+    if (document.getElementById('screen-summary').classList.contains('active'))  renderSummary();
     showToast('🗑️ All data cleared');
   });
 }
