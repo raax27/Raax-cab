@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -292,8 +291,8 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
   <!-- LOGIN FORM -->
   <div id="authLogin" class="auth-card">
     <div class="fin">
-      <label>Email</label>
-      <input type="email" id="loginEmail" placeholder="you@example.com" autocomplete="email" autocapitalize="off" style="text-align:left;letter-spacing:0;font-family:Nunito,sans-serif;font-size:15px;font-weight:600;">
+      <label>Email or Username</label>
+      <input type="text" id="loginEmail" placeholder="email@example.com or your username" autocomplete="username" autocapitalize="off" style="text-align:left;letter-spacing:0;font-family:Nunito,sans-serif;font-size:15px;font-weight:600;">
     </div>
     <div class="fin">
       <label>Password</label>
@@ -312,6 +311,10 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
     <div class="fin">
       <label>Your Name</label>
       <input type="text" id="signupName" placeholder="Your name" autocapitalize="words" maxlength="30" style="text-align:left;letter-spacing:0;font-family:Nunito,sans-serif;font-size:15px;font-weight:600;">
+    </div>
+    <div class="fin">
+      <label>Username <span style="color:var(--muted);font-weight:600;font-size:11px;">— for quick login (3-20 chars)</span></label>
+      <input type="text" id="signupUsername" placeholder="e.g. ravi_carpool" autocapitalize="off" autocomplete="username" maxlength="20" style="text-align:left;letter-spacing:0;font-family:Nunito,sans-serif;font-size:15px;font-weight:600;">
     </div>
     <div class="fin">
       <label>Email</label>
@@ -645,6 +648,11 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
             <div class="srd" id="accountStatus">Not signed in</div>
           </div>
         </div>
+        <div class="srow" id="mpinRow" onclick="showMpinModal('setup')" style="display:none;">
+          <span class="sri">🔢</span>
+          <div class="srt"><div class="srn" id="mpinLabel">Set MPIN</div><div class="srd">Quick 4-digit access PIN</div></div>
+          <span class="srr">›</span>
+        </div>
         <div class="srow danger" id="signOutRow" onclick="doCloudLogout()" style="display:none;">
           <span class="sri">🚪</span>
           <div class="srt"><div class="srn">Sign Out</div><div class="srd">Sign out of your cloud account</div></div>
@@ -661,7 +669,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         </div>
       </div>
 
-      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.0.4 — ☁️ Cloud Edition</div>
+      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.1.0 — ☁️ Username & MPIN</div>
     </div>
 
   </div>
@@ -765,11 +773,19 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
   </div>
 </div>
 <div class="mbg" id="riderModal">
-  <div class="modal">
+  <div class="modal" style="max-height:85vh;overflow-y:auto;">
     <div class="mtl" id="riderModalTitle">Add Rider</div>
     <div class="fin">
       <label>Name</label>
       <input type="text" id="riderNameInput" placeholder="Enter rider name" autocapitalize="words" maxlength="20">
+    </div>
+    <div class="fin">
+      <label>Email <span style="color:var(--muted);font-weight:600;font-size:11px;">— optional, for sending reminders</span></label>
+      <input type="email" id="riderEmailInput" placeholder="rider@example.com" autocapitalize="off" autocomplete="off" maxlength="60" style="background:var(--card);border:1.5px solid var(--border);color:var(--text);border-radius:10px;padding:10px 12px;font-family:'JetBrains Mono',monospace;font-size:13px;width:100%;letter-spacing:0;text-align:left;">
+    </div>
+    <div class="fin">
+      <label>Phone <span style="color:var(--muted);font-weight:600;font-size:11px;">— optional</span></label>
+      <input type="tel" id="riderPhoneInput" placeholder="+91 9876543210" autocomplete="off" maxlength="20" style="background:var(--card);border:1.5px solid var(--border);color:var(--text);border-radius:10px;padding:10px 12px;font-family:'JetBrains Mono',monospace;font-size:13px;width:100%;letter-spacing:0;text-align:left;">
     </div>
     <div class="fin">
       <label>Fare per ride (₹) <span style="color:var(--muted);font-weight:600;font-size:11px;">— leave blank to use default</span></label>
@@ -788,6 +804,68 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
   </div>
 </div>
 
+<!-- ── EMAIL TEMPLATE MODAL ── -->
+<div class="mbg" id="emailModal">
+  <div class="modal" style="max-height:85vh;overflow-y:auto;">
+    <div class="mtl" id="emailModalTitle">📧 Send Email</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:14px;text-align:center;line-height:1.5;">
+      Pick a template, edit if needed, then open in your email app.
+    </div>
+    <div class="fin">
+      <label>Template</label>
+      <select id="emailTemplate" onchange="onEmailTemplateChange()" style="background:var(--card);border:1.5px solid var(--border);color:var(--text);border-radius:10px;padding:10px 12px;font-family:Nunito,sans-serif;font-size:13px;width:100%;-webkit-appearance:none;appearance:none;color-scheme:dark;">
+        <option value="dues">⏳ Dues Reminder</option>
+        <option value="thanks">✅ Payment Thanks</option>
+        <option value="summary">📊 Monthly Summary</option>
+        <option value="custom">✏️ Custom Message</option>
+      </select>
+    </div>
+    <div class="fin">
+      <label>Subject</label>
+      <input type="text" id="emailSubject" maxlength="100" style="background:var(--card);border:1.5px solid var(--border);color:var(--text);border-radius:10px;padding:10px 12px;font-family:Nunito,sans-serif;font-size:14px;width:100%;letter-spacing:0;text-align:left;">
+    </div>
+    <div class="fin">
+      <label>Message</label>
+      <textarea id="emailBody" rows="8" style="background:var(--card);border:1.5px solid var(--border);color:var(--text);border-radius:10px;padding:10px 12px;font-family:Nunito,sans-serif;font-size:13px;width:100%;letter-spacing:0;text-align:left;resize:vertical;line-height:1.5;"></textarea>
+    </div>
+    <div class="login-err" id="emailErr"></div>
+    <button class="login-btn" onclick="openMailto()" style="margin-top:8px">📨 Open in Email App</button>
+    <button class="mbtn" onclick="copyEmailToClipboard()" style="margin-top:8px;justify-content:center;">
+      <span class="mi">📋</span> Copy Message
+    </button>
+    <button class="mcancel" onclick="closeEmailModal()">Cancel</button>
+  </div>
+</div>
+
+<!-- ── MPIN SETUP / ENTRY MODAL ── -->
+<div class="mbg" id="mpinModal">
+  <div class="modal" style="max-height:85vh;overflow-y:auto;text-align:center;">
+    <div class="mtl" id="mpinTitle">🔢 Set Your MPIN</div>
+    <div id="mpinHint" style="font-size:12px;color:var(--muted);margin-bottom:18px;line-height:1.5;">
+      Create a 4-digit PIN for quick access. You won't need to type your password every time.
+    </div>
+    <div style="display:flex;justify-content:center;gap:12px;margin-bottom:16px;" id="mpinDots">
+      <div class="pin-dot"></div><div class="pin-dot"></div><div class="pin-dot"></div><div class="pin-dot"></div>
+    </div>
+    <div class="login-err" id="mpinErr" style="margin-bottom:12px;"></div>
+    <div class="pin-keypad">
+      <button class="pk" onclick="mpinKey('1')">1</button>
+      <button class="pk" onclick="mpinKey('2')">2</button>
+      <button class="pk" onclick="mpinKey('3')">3</button>
+      <button class="pk" onclick="mpinKey('4')">4</button>
+      <button class="pk" onclick="mpinKey('5')">5</button>
+      <button class="pk" onclick="mpinKey('6')">6</button>
+      <button class="pk" onclick="mpinKey('7')">7</button>
+      <button class="pk" onclick="mpinKey('8')">8</button>
+      <button class="pk" onclick="mpinKey('9')">9</button>
+      <button class="pk pk-empty"></button>
+      <button class="pk" onclick="mpinKey('0')">0</button>
+      <button class="pk" onclick="mpinDel()">⌫</button>
+    </div>
+    <button class="mcancel" onclick="skipMpin()" id="mpinSkipBtn" style="margin-top:14px;">Skip for now</button>
+  </div>
+</div>
+
 <script>
 // ═══════════════════════════════════════════════════════════════
 // ── CLOUD LAYER (Supabase auth + database) ─────────────────────
@@ -795,13 +873,14 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 
 // ⚠️ PASTE YOUR SUPABASE CREDENTIALS HERE
 // Get them from: Supabase Dashboard → Settings → API
-const SUPABASE_URL  = 'https://kqyaczklqvfiglendrim.supabase.co';
-const SUPABASE_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtxeWFjemtscXZmaWdsZW5kcmltIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAyMjc1MjAsImV4cCI6MjA5NTgwMzUyMH0.zR_rtd8S8HIXIFiMWnfW3-gF1BlmllZEot9pELaSSsg';
-
+const SUPABASE_URL  = '<PASTE_YOUR_PROJECT_URL_HERE>';
+const SUPABASE_KEY  = '<PASTE_YOUR_ANON_KEY_HERE>';
 
 let sb = null;             // Supabase client
 let CURRENT_USER = null;   // Logged-in user object
 let CLOUD_READY = false;   // True when credentials are configured
+let USERNAME = '';         // Lowercase username for quick login
+let MPIN_HASH = '';        // Hashed 4-digit MPIN for quick re-auth
 
 function isCloudConfigured() {
   return SUPABASE_URL && SUPABASE_KEY
@@ -849,22 +928,55 @@ function hideAuthWrap() { document.getElementById('authWrap').classList.remove('
 // ── LOGIN ─────────────────────────────────────────────────────
 async function doLogin() {
   if (!CLOUD_READY) { showToast('⚠️ Cloud not configured. See setup guide.'); return; }
-  const email = document.getElementById('loginEmail').value.trim();
+  const identifier = document.getElementById('loginEmail').value.trim();
   const pass  = document.getElementById('loginPass').value;
   const err   = document.getElementById('loginErr');
   const btn   = document.getElementById('loginBtn');
   err.textContent = '';
 
-  if (!email || !pass) { err.textContent = 'Email and password required.'; return; }
+  if (!identifier || !pass) { err.textContent = 'Username/email and password required.'; return; }
 
   btn.disabled = true; btn.textContent = 'Signing in…';
+
+  // If identifier looks like email, use directly. Otherwise, lookup username → email.
+  let email = identifier;
+  if (!identifier.includes('@')) {
+    try {
+      const { data: row, error: lookupErr } = await sb
+        .from('settings')
+        .select('user_id')
+        .ilike('username', identifier)
+        .maybeSingle();
+      if (lookupErr || !row) {
+        btn.disabled = false; btn.textContent = 'Sign In';
+        err.textContent = 'Username not found. Try your email instead.';
+        haptic('error'); return;
+      }
+      // Get the email for this user_id via auth admin — but we can't from client.
+      // Instead, store email directly in settings on signup. (See doSignup below.)
+      const { data: row2 } = await sb.from('settings').select('admin_name').eq('user_id', row.user_id).maybeSingle();
+      // We need email — look it up via a separate column
+      const { data: emailRow } = await sb.from('settings').select('login_email').eq('user_id', row.user_id).maybeSingle();
+      if (!emailRow || !emailRow.login_email) {
+        btn.disabled = false; btn.textContent = 'Sign In';
+        err.textContent = 'Could not resolve username. Try email instead.';
+        haptic('error'); return;
+      }
+      email = emailRow.login_email;
+    } catch(e) {
+      console.error('Username lookup failed:', e);
+      btn.disabled = false; btn.textContent = 'Sign In';
+      err.textContent = 'Username lookup failed. Try email.';
+      haptic('error'); return;
+    }
+  }
+
   const { data, error } = await sb.auth.signInWithPassword({ email, password: pass });
   btn.disabled = false; btn.textContent = 'Sign In';
   if (error) {
-    // Friendlier error messages
     let msg = error.message;
     if (msg.toLowerCase().includes('invalid login')) {
-      msg = 'Wrong email or password. New here? Tap "Create account".';
+      msg = 'Wrong credentials. New here? Tap "Create account".';
     } else if (msg.toLowerCase().includes('email not confirmed')) {
       msg = 'Please check your inbox and click the confirmation link first.';
     } else if (msg.toLowerCase().includes('fetch')) {
@@ -884,32 +996,52 @@ async function doLogin() {
 // ── SIGNUP ────────────────────────────────────────────────────
 async function doSignup() {
   if (!CLOUD_READY) { showToast('⚠️ Cloud not configured. See setup guide.'); return; }
-  const name  = document.getElementById('signupName').value.trim();
-  const email = document.getElementById('signupEmail').value.trim();
-  const pass  = document.getElementById('signupPass').value;
-  const err   = document.getElementById('signupErr');
-  const btn   = document.getElementById('signupBtn');
+  const name     = document.getElementById('signupName').value.trim();
+  const username = document.getElementById('signupUsername').value.trim().toLowerCase();
+  const email    = document.getElementById('signupEmail').value.trim().toLowerCase();
+  const pass     = document.getElementById('signupPass').value;
+  const err      = document.getElementById('signupErr');
+  const btn      = document.getElementById('signupBtn');
   err.textContent = '';
 
   if (!name)        { err.textContent = 'Please enter your name.'; return; }
-  if (!email)       { err.textContent = 'Email required.'; return; }
+  if (!username || username.length < 3) {
+    err.textContent = 'Username must be at least 3 characters.'; return;
+  }
+  if (!/^[a-z0-9_-]+$/.test(username)) {
+    err.textContent = 'Username can only have lowercase letters, numbers, _ and -.'; return;
+  }
+  if (!email || !email.includes('@')) { err.textContent = 'Valid email required.'; return; }
   if (!pass || pass.length < 6) { err.textContent = 'Password must be at least 6 characters.'; return; }
 
   btn.disabled = true; btn.textContent = 'Creating account…';
+
+  // Check username availability first
+  const { data: existing } = await sb.from('settings').select('user_id').ilike('username', username).maybeSingle();
+  if (existing) {
+    btn.disabled = false; btn.textContent = 'Create Account';
+    err.textContent = 'Username already taken. Try another.';
+    haptic('error'); return;
+  }
+
   const { data, error } = await sb.auth.signUp({
     email, password: pass,
-    options: { data: { name } }
+    options: { data: { name, username } }
   });
   btn.disabled = false; btn.textContent = 'Create Account';
 
   if (error) { err.textContent = error.message; haptic('error'); return; }
 
   if (data.user && !data.session) {
-    // Email confirmation required
     showToast('📧 Check your email to confirm and sign in');
     showAuthScreen('login');
   } else if (data.session) {
     CURRENT_USER = data.user;
+    USERNAME = username;
+    // Save username + email to settings table for future login lookups
+    await sb.from('settings').upsert({
+      user_id: data.user.id, admin_name: name, username, login_email: email, default_fare: FARE
+    });
     haptic('success');
     showToast('🎉 Account created!');
     await onAuthSuccess(name);
@@ -996,6 +1128,14 @@ async function onAuthSuccess(signupName) {
 
   renderRiders(); updateStats(); renderFilterBar();
   goTo('log');
+
+  // Prompt to set MPIN if not yet configured (and not skipped)
+  setTimeout(() => {
+    const skipped = localStorage.getItem('rsPWA_mpin_skipped') === '1';
+    if (!MPIN_HASH && !skipped) {
+      showMpinModal('setup');
+    }
+  }, 1000);
 }
 
 // ── LOAD ALL DATA FROM CLOUD ──────────────────────────────────
@@ -1008,12 +1148,17 @@ async function loadCloudData() {
     if (s) {
       adminName = s.admin_name || 'Admin';
       FARE     = s.default_fare || 75;
+      USERNAME = s.username || '';
+      MPIN_HASH = s.mpin_hash || '';
     }
 
     // ── Riders ──
     const { data: rs, error: re } = await sb.from('riders').select('*').eq('user_id', CURRENT_USER.id).order('created_at');
     if (re) { console.warn('Riders load error:', re); throw re; }
-    const loadedRiders = (rs || []).map(r => ({ name: r.name, clr: r.color, fare: r.fare || undefined }));
+    const loadedRiders = (rs || []).map(r => ({
+      name: r.name, clr: r.color, fare: r.fare || undefined,
+      email: r.email || '', phone: r.phone || ''
+    }));
 
     // ── Trip entries (paginated to handle >1000 rows) ──
     const loadedEntries = {};
@@ -1029,6 +1174,7 @@ async function loadCloudData() {
         loadedEntries[t.trip_date][t.rider_name] = {
           mP: t.m_present || '', mPaid: t.m_paid || '',
           eP: t.e_present || '', ePaid: t.e_paid || '',
+          fareAtTime: t.fare_at_time || undefined
         };
       });
       if (ts.length < batch) break;
@@ -1070,7 +1216,8 @@ async function cloudSaveSettings() {
 async function cloudUpsertRider(r) {
   if (!CURRENT_USER || !sb) return;
   await sb.from('riders').upsert({
-    user_id: CURRENT_USER.id, name: r.name, color: r.clr, fare: r.fare || null
+    user_id: CURRENT_USER.id, name: r.name, color: r.clr, fare: r.fare || null,
+    email: r.email || null, phone: r.phone || null
   }, { onConflict: 'user_id,name' });
 }
 
@@ -1084,6 +1231,7 @@ async function cloudSaveTripEntry(date, riderName, d) {
   await sb.from('trip_entries').upsert({
     user_id: CURRENT_USER.id, trip_date: date, rider_name: riderName,
     m_present: d.mP||'', m_paid: d.mPaid||'', e_present: d.eP||'', e_paid: d.ePaid||'',
+    fare_at_time: d.fareAtTime || null,
     updated_at: new Date().toISOString()
   }, { onConflict: 'user_id,rider_name,trip_date' });
 }
@@ -1535,25 +1683,37 @@ function riderFare(name) {
   return (r && r.fare) ? r.fare : FARE;
 }
 
+// Get the fare for a specific trip entry — uses the historical fare stored at log time
+// if available, otherwise falls back to the current rider/default fare.
+function entryFare(d, name) {
+  if (d && d.fareAtTime && d.fareAtTime > 0) return d.fareAtTime;
+  return riderFare(name);
+}
+
 function calcR(name, monthFilter, dateFilter) {
-  let pR=0,uR=0,pendingDates=[];
-  const fare = riderFare(name);
+  let pR=0,uR=0,paid=0,pending=0,pendingDates=[];
   Object.entries(entries).forEach(([date, day])=>{
     if (dateFilter && date !== dateFilter) return;
     if (!dateFilter && monthFilter && !date.startsWith(monthFilter)) return;
     const d=day[name]; if(!d) return;
-    if(d.mP==='P'&&d.mPaid==='Y')pR++;
-    if(d.eP==='P'&&d.ePaid==='Y')pR++;
-    if(d.mP==='P'&&d.mPaid==='N'){ uR++; pendingDates.push({date, slot:'Morning'}); }
-    if(d.eP==='P'&&d.ePaid==='N'){ uR++; pendingDates.push({date, slot:'Evening'}); }
+    const fare = entryFare(d, name);
+    if(d.mP==='P'&&d.mPaid==='Y'){ pR++; paid += fare; }
+    if(d.eP==='P'&&d.ePaid==='Y'){ pR++; paid += fare; }
+    if(d.mP==='P'&&d.mPaid==='N'){ uR++; pending += fare; pendingDates.push({date, slot:'Morning', fare}); }
+    if(d.eP==='P'&&d.ePaid==='N'){ uR++; pending += fare; pendingDates.push({date, slot:'Evening', fare}); }
   });
-  return {pR,uR,paid:pR*fare,pending:uR*fare,pendingDates,fare};
+  return {pR,uR,paid,pending,pendingDates,fare: riderFare(name)};
 }
+
 function calcDay(day) {
   let paid=0,pending=0;
-  RIDERS.forEach(r=>{ const d=day[r.name]||{}; const fare=riderFare(r.name);
-    if(d.mP==='P'&&d.mPaid==='Y')paid+=fare; if(d.eP==='P'&&d.ePaid==='Y')paid+=fare;
-    if(d.mP==='P'&&d.mPaid==='N')pending+=fare; if(d.eP==='P'&&d.ePaid==='N')pending+=fare;
+  RIDERS.forEach(r=>{
+    const d=day[r.name]||{};
+    const fare = entryFare(d, r.name);
+    if(d.mP==='P'&&d.mPaid==='Y') paid+=fare;
+    if(d.eP==='P'&&d.ePaid==='Y') paid+=fare;
+    if(d.mP==='P'&&d.mPaid==='N') pending+=fare;
+    if(d.eP==='P'&&d.ePaid==='N') pending+=fare;
   });
   return {paid,pending};
 }
@@ -1691,6 +1851,15 @@ function tog(rider,field,val) {
   day[rider][field]=day[rider][field]===val?'':val;
   if(field==='mP'&&day[rider][field]!=='P') day[rider].mPaid='';
   if(field==='eP'&&day[rider][field]!=='P') day[rider].ePaid='';
+  // Lock in the fare at the time this trip is logged.
+  // Once recorded, fare changes will NOT affect this entry retroactively.
+  if ((day[rider].mP === 'P' || day[rider].eP === 'P') && !day[rider].fareAtTime) {
+    day[rider].fareAtTime = riderFare(rider);
+  }
+  // If both slots are cleared, also clear the fareAtTime so it re-locks fresh next time
+  if (day[rider].mP !== 'P' && day[rider].eP !== 'P') {
+    delete day[rider].fareAtTime;
+  }
   save(); renderRiders(); updateStats();
   // Push to cloud (async, doesn't block UI)
   if (CLOUD_READY && CURRENT_USER) cloudSaveTripEntry(date, rider, day[rider]).catch(()=>{});
@@ -1850,18 +2019,22 @@ function renderSummary(){
   const cards = RIDERS.map(r=>{
     const s=calcR(r.name, mo, dt); const img=photos[r.name];
     const fareLabel = r.fare ? `₹${r.fare}/ride` : `₹${FARE}/ride (default)`;
-    return `<div class="rsc" data-rider="${esc(r.name)}" style="cursor:${s.pending>0?'pointer':'default'};" onclick="openRiderPending('${esc(r.name)}','${mo}','${dt}')">
-      <div class="rsav" style="background:${img?'#1c1530':r.clr}">${img?`<img src="${img}" alt="${esc(r.name)}">`:`${esc(r.name[0])}`}</div>
-      <div class="rsin">
-        <div class="rsnm">${esc(r.name)}</div>
-        <div class="rsrd">${s.pR} paid · ${s.uR} unpaid · ${fareLabel}</div>
+    const hasEmail = r.email && r.email.length > 0;
+    return `<div class="rsc" data-rider="${esc(r.name)}" style="cursor:${s.pending>0?'pointer':'default'};">
+      <div onclick="openRiderPending('${esc(r.name)}','${mo}','${dt}')" style="display:flex;align-items:center;gap:12px;flex:1;">
+        <div class="rsav" style="background:${img?'#1c1530':r.clr}">${img?`<img src="${img}" alt="${esc(r.name)}">`:`${esc(r.name[0])}`}</div>
+        <div class="rsin">
+          <div class="rsnm">${esc(r.name)}</div>
+          <div class="rsrd">${s.pR} paid · ${s.uR} unpaid · ${fareLabel}</div>
+        </div>
+        <div class="rsrt">
+          <div class="rspd">₹${s.paid}</div>
+          ${s.pending>0
+            ? `<div class="rsdu" style="display:flex;align-items:center;gap:3px;">₹${s.pending} due <span style="font-size:9px;background:rgba(248,81,73,.2);border-radius:4px;padding:1px 4px;">tap</span></div>`
+            : `<div class="rsdu" style="color:var(--green)">All clear ✓</div>`}
+        </div>
       </div>
-      <div class="rsrt">
-        <div class="rspd">₹${s.paid}</div>
-        ${s.pending>0
-          ? `<div class="rsdu" style="display:flex;align-items:center;gap:3px;">₹${s.pending} due <span style="font-size:9px;background:rgba(248,81,73,.2);border-radius:4px;padding:1px 4px;">tap</span></div>`
-          : `<div class="rsdu" style="color:var(--green)">All clear ✓</div>`}
-      </div>
+      ${hasEmail ? `<button onclick="event.stopPropagation();openEmailModal('${esc(r.name)}')" title="Email ${esc(r.name)}" style="background:var(--card);border:1px solid var(--border);color:var(--accent);border-radius:8px;padding:6px 10px;cursor:pointer;font-size:13px;margin-left:8px;">📧</button>` : ''}
     </div>`;
   }).join('');
 
@@ -1932,9 +2105,11 @@ function openRiderModal(idx){
   editingRiderIdx = idx;
   const isNew = idx === null;
   document.getElementById('riderModalTitle').textContent = isNew ? 'Add Rider' : 'Edit Rider';
-  document.getElementById('riderNameInput').value = isNew ? '' : RIDERS[idx].name;
-  document.getElementById('riderFareInput').value = isNew ? '' : (RIDERS[idx].fare || '');
-  document.getElementById('riderErr').textContent = '';
+  document.getElementById('riderNameInput').value  = isNew ? '' : RIDERS[idx].name;
+  document.getElementById('riderEmailInput').value = isNew ? '' : (RIDERS[idx].email || '');
+  document.getElementById('riderPhoneInput').value = isNew ? '' : (RIDERS[idx].phone || '');
+  document.getElementById('riderFareInput').value  = isNew ? '' : (RIDERS[idx].fare || '');
+  document.getElementById('riderErr').textContent  = '';
   document.getElementById('riderDeleteBtn').style.display = isNew ? 'none' : 'flex';
   selectedColor = isNew ? COLORS[0] : RIDERS[idx].clr;
   renderColorGrid();
@@ -1966,39 +2141,46 @@ function saveRider(){
   const nameEl = document.getElementById('riderNameInput');
   const errEl  = document.getElementById('riderErr');
   const name   = nameEl.value.trim();
+  const email  = document.getElementById('riderEmailInput').value.trim();
+  const phone  = document.getElementById('riderPhoneInput').value.trim();
   errEl.textContent = '';
 
   if (!name){ errEl.textContent = 'Please enter a name.'; return; }
   if (name.length < 2){ errEl.textContent = 'Name must be at least 2 characters.'; return; }
   if (name.length > 20){ errEl.textContent = 'Name must be 20 characters or less.'; return; }
-  // Only allow letters, spaces, hyphens, apostrophes — block all special chars
   if (!/^[\p{L}\p{M}'\- ]+$/u.test(name)){ errEl.textContent = 'Name can only contain letters, spaces, hyphens and apostrophes.'; return; }
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){ errEl.textContent = 'Invalid email format.'; return; }
 
   const isNew = editingRiderIdx === null;
 
-  // Check duplicate name (skip self when editing)
   const duplicate = RIDERS.some((r,i)=>
     r.name.toLowerCase()===name.toLowerCase() && (isNew || i!==editingRiderIdx)
   );
   if (duplicate){ errEl.textContent = 'A rider with this name already exists.'; return; }
 
+  const fareVal = parseInt(document.getElementById('riderFareInput').value);
   if (isNew) {
-    const fareVal = parseInt(document.getElementById('riderFareInput').value);
-    const riderObj = { name, clr: selectedColor };
+    const riderObj = { name, clr: selectedColor, email, phone };
     if (fareVal && fareVal >= 1 && fareVal <= 9999) riderObj.fare = fareVal;
     RIDERS.push(riderObj);
     showToast('✅ '+name+' added!');
   } else {
     const oldName = RIDERS[editingRiderIdx].name;
-    const fareVal = parseInt(document.getElementById('riderFareInput').value);
     if (oldName !== name) {
       Object.values(entries).forEach(day => {
         if (day[oldName]) { day[name] = day[oldName]; delete day[oldName]; }
       });
       if (photos[oldName]) { photos[name] = photos[oldName]; delete photos[oldName]; }
       save(); saveP();
+      // Update cloud trip_entries to new rider_name
+      if (CLOUD_READY && CURRENT_USER) {
+        sb.from('trip_entries').update({ rider_name: name })
+          .eq('user_id', CURRENT_USER.id).eq('rider_name', oldName).then(()=>{});
+        // Delete old rider row, will be replaced by upsert below
+        sb.from('riders').delete().eq('user_id', CURRENT_USER.id).eq('name', oldName).then(()=>{});
+      }
     }
-    RIDERS[editingRiderIdx] = { name, clr: selectedColor };
+    RIDERS[editingRiderIdx] = { name, clr: selectedColor, email, phone };
     if (fareVal && fareVal >= 1 && fareVal <= 9999) RIDERS[editingRiderIdx].fare = fareVal;
     showToast('✅ '+name+' updated!');
   }
@@ -2128,14 +2310,19 @@ function goTo(name){
     const emailEl  = document.getElementById('accountEmail');
     const statusEl = document.getElementById('accountStatus');
     const signOut  = document.getElementById('signOutRow');
+    const mpinRow   = document.getElementById('mpinRow');
+    const mpinLabel = document.getElementById('mpinLabel');
     if (CURRENT_USER) {
       emailEl.textContent  = CURRENT_USER.email;
-      statusEl.textContent = '☁️ Synced to cloud · ' + (adminName || 'Admin');
+      statusEl.textContent = '☁️ Synced to cloud · ' + (adminName || 'Admin') + (USERNAME ? ' (@' + USERNAME + ')' : '');
       signOut.style.display = 'flex';
+      mpinRow.style.display = 'flex';
+      mpinLabel.textContent = MPIN_HASH ? 'Change MPIN' : 'Set MPIN';
     } else {
       emailEl.textContent  = 'Local mode';
       statusEl.textContent = isCloudConfigured() ? 'Not signed in' : 'Cloud not configured';
       signOut.style.display = 'none';
+      mpinRow.style.display = 'none';
     }
   }
 }
@@ -2844,6 +3031,210 @@ window.addEventListener('DOMContentLoaded', () => {
     }
   }, { passive: true });
 });
+
+// ── EMAIL TO RIDER ────────────────────────────────────────────
+let _emailingRiderName = '';
+
+function openEmailModal(riderName) {
+  const rider = RIDERS.find(r => r.name === riderName);
+  if (!rider) return;
+  if (!rider.email) {
+    showConfirm('No email on file', `${riderName} has no email address. Edit rider to add one?`, () => {
+      const idx = RIDERS.findIndex(r => r.name === riderName);
+      if (idx >= 0) openRiderModal(idx);
+    });
+    return;
+  }
+  _emailingRiderName = riderName;
+  document.getElementById('emailModalTitle').textContent = '📧 Email ' + riderName;
+  document.getElementById('emailTemplate').value = 'dues';
+  fillEmailTemplate('dues');
+  document.getElementById('emailErr').textContent = '';
+  document.getElementById('emailModal').classList.add('open');
+}
+
+function closeEmailModal() {
+  document.getElementById('emailModal').classList.remove('open');
+  _emailingRiderName = '';
+}
+
+function onEmailTemplateChange() {
+  fillEmailTemplate(document.getElementById('emailTemplate').value);
+}
+
+function fillEmailTemplate(kind) {
+  const riderName = _emailingRiderName;
+  if (!riderName) return;
+  const s = calcR(riderName, '', '');
+  const monthLabel = new Date().toLocaleDateString('en-IN', { month:'long', year:'numeric' });
+  const sMonth = calcR(riderName, new Date().toISOString().slice(0,7), '');
+  const sender = adminName || 'Admin';
+  let subject = '', body = '';
+
+  if (kind === 'dues') {
+    subject = `Carpool Dues Reminder — ₹${s.pending}`;
+    let lines = '';
+    if (s.pendingDates && s.pendingDates.length) {
+      lines = s.pendingDates.slice(0, 15).map(p => `  • ${formatDate(p.date)} (${p.slot}) — ₹${p.fare}`).join('\n');
+      if (s.pendingDates.length > 15) lines += `\n  …and ${s.pendingDates.length - 15} more`;
+    }
+    body = `Hi ${riderName},\n\nThis is a friendly reminder of your pending carpool dues:\n\n${lines}\n\nTotal pending: ₹${s.pending} (${s.uR} unpaid rides)\n\nPlease settle when convenient. Thanks!\n\n— ${sender}`;
+  } else if (kind === 'thanks') {
+    subject = `Thanks for your carpool payment`;
+    body = `Hi ${riderName},\n\nThanks for paying your carpool dues — much appreciated!\n\nPaid so far: ₹${s.paid} (${s.pR} rides)\n${s.pending > 0 ? `Still pending: ₹${s.pending}\n` : "All settled up. 🎉\n"}\n— ${sender}`;
+  } else if (kind === 'summary') {
+    subject = `Carpool summary — ${monthLabel}`;
+    body = `Hi ${riderName},\n\nHere's your carpool summary for ${monthLabel}:\n\n• Total rides: ${sMonth.pR + sMonth.uR}\n• Paid: ${sMonth.pR} (₹${sMonth.paid})\n• Pending: ${sMonth.uR} (₹${sMonth.pending})\n\n${sMonth.pending > 0 ? `Please settle ₹${sMonth.pending} when possible.\n` : 'Thanks for keeping it current! 🎉\n'}\n— ${sender}`;
+  } else if (kind === 'custom') {
+    subject = '';
+    body = `Hi ${riderName},\n\n\n\n— ${sender}`;
+  }
+  document.getElementById('emailSubject').value = subject;
+  document.getElementById('emailBody').value    = body;
+}
+
+function openMailto() {
+  const rider = RIDERS.find(r => r.name === _emailingRiderName);
+  if (!rider || !rider.email) return;
+  const subject = document.getElementById('emailSubject').value;
+  const body    = document.getElementById('emailBody').value;
+  const url = `mailto:${encodeURIComponent(rider.email)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  window.location.href = url;
+  closeEmailModal();
+  showToast('📨 Opening email app…');
+}
+
+async function copyEmailToClipboard() {
+  const subject = document.getElementById('emailSubject').value;
+  const body    = document.getElementById('emailBody').value;
+  const rider   = RIDERS.find(r => r.name === _emailingRiderName);
+  const text    = `To: ${rider ? rider.email : ''}\nSubject: ${subject}\n\n${body}`;
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast('📋 Copied to clipboard');
+    haptic('light');
+  } catch(e) {
+    showToast('❌ Could not copy');
+  }
+}
+
+// ── MPIN (Quick re-auth after cloud login) ────────────────────
+let _mpinBuf = '';
+let _mpinMode = 'setup'; // 'setup' | 'confirm' | 'verify'
+let _mpinFirstEntry = '';
+const MPIN_SALT = 'raax-mpin-v1';
+
+async function hashMpin(pin) {
+  const enc = new TextEncoder();
+  const km = await crypto.subtle.importKey('raw', enc.encode(pin), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits(
+    { name:'PBKDF2', salt: enc.encode(MPIN_SALT + (CURRENT_USER ? CURRENT_USER.id : '')), iterations: 100000, hash:'SHA-256' },
+    km, 256);
+  return Array.from(new Uint8Array(bits)).map(b => b.toString(16).padStart(2,'0')).join('');
+}
+
+function showMpinModal(mode) {
+  _mpinMode = mode;
+  _mpinBuf = '';
+  _mpinFirstEntry = '';
+  syncMpinDots(0);
+  const title = document.getElementById('mpinTitle');
+  const hint  = document.getElementById('mpinHint');
+  const skip  = document.getElementById('mpinSkipBtn');
+  if (mode === 'setup') {
+    title.textContent = '🔢 Set Your MPIN';
+    hint.textContent = 'Create a 4-digit PIN for quick access on this device.';
+    skip.style.display = 'block';
+  } else if (mode === 'confirm') {
+    title.textContent = '🔢 Confirm MPIN';
+    hint.textContent = 'Enter the same 4 digits again to confirm.';
+    skip.style.display = 'none';
+  }
+  document.getElementById('mpinErr').textContent = '';
+  document.getElementById('mpinModal').classList.add('open');
+}
+
+function closeMpinModal() {
+  document.getElementById('mpinModal').classList.remove('open');
+}
+
+function syncMpinDots(n) {
+  const dots = document.getElementById('mpinDots').children;
+  for (let i = 0; i < dots.length; i++) {
+    dots[i].classList.toggle('filled', i < n);
+    dots[i].classList.remove('error', 'success');
+  }
+}
+
+function flashMpinDots(state) {
+  const dots = document.getElementById('mpinDots').children;
+  for (const d of dots) d.classList.add(state);
+}
+
+async function mpinKey(digit) {
+  if (_mpinBuf.length >= 4) return;
+  _mpinBuf += digit;
+  syncMpinDots(_mpinBuf.length);
+  haptic('light');
+  if (_mpinBuf.length === 4) setTimeout(handleMpinComplete, 150);
+}
+function mpinDel() {
+  if (_mpinBuf.length === 0) return;
+  _mpinBuf = _mpinBuf.slice(0, -1);
+  syncMpinDots(_mpinBuf.length);
+  haptic('light');
+}
+
+async function handleMpinComplete() {
+  const errEl = document.getElementById('mpinErr');
+  if (_mpinMode === 'setup') {
+    _mpinFirstEntry = _mpinBuf;
+    _mpinBuf = '';
+    syncMpinDots(0);
+    _mpinMode = 'confirm';
+    document.getElementById('mpinTitle').textContent = '🔢 Confirm MPIN';
+    document.getElementById('mpinHint').textContent = 'Enter the same 4 digits again to confirm.';
+    document.getElementById('mpinSkipBtn').style.display = 'none';
+    return;
+  }
+  if (_mpinMode === 'confirm') {
+    if (_mpinBuf !== _mpinFirstEntry) {
+      flashMpinDots('error');
+      haptic('error');
+      errEl.textContent = "PINs don't match. Try again.";
+      setTimeout(() => { _mpinBuf=''; _mpinFirstEntry=''; _mpinMode='setup'; syncMpinDots(0); errEl.textContent=''; document.getElementById('mpinTitle').textContent='🔢 Set Your MPIN'; document.getElementById('mpinHint').textContent='Create a 4-digit PIN for quick access.'; document.getElementById('mpinSkipBtn').style.display='block'; }, 1000);
+      return;
+    }
+    const hash = await hashMpin(_mpinBuf);
+    if (CLOUD_READY && CURRENT_USER) {
+      await sb.from('settings').update({ mpin_hash: hash }).eq('user_id', CURRENT_USER.id);
+    }
+    MPIN_HASH = hash;
+    localStorage.setItem('rsPWA_mpin_set', '1');
+    flashMpinDots('success');
+    haptic('success');
+    setTimeout(() => { closeMpinModal(); showToast('✅ MPIN saved!'); }, 400);
+    return;
+  }
+  if (_mpinMode === 'verify') {
+    const hash = await hashMpin(_mpinBuf);
+    if (hash === MPIN_HASH) {
+      flashMpinDots('success');
+      haptic('success');
+      setTimeout(() => { closeMpinModal(); }, 300);
+    } else {
+      flashMpinDots('error');
+      haptic('error');
+      errEl.textContent = 'Wrong MPIN.';
+      setTimeout(() => { _mpinBuf=''; syncMpinDots(0); errEl.textContent=''; }, 800);
+    }
+  }
+}
+
+function skipMpin() {
+  localStorage.setItem('rsPWA_mpin_skipped', '1');
+  closeMpinModal();
+}
 
 // ── FORCE UPDATE ──────────────────────────────────────────────
 async function forceUpdate() {
