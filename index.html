@@ -669,7 +669,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         </div>
       </div>
 
-      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.1.0 — ☁️ Username & MPIN</div>
+      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.1.2 — ☁️ Cloud · Username · MPIN · Email</div>
     </div>
 
   </div>
@@ -875,6 +875,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 // Get them from: Supabase Dashboard → Settings → API
 const SUPABASE_URL  = 'https://kqyaczklqvfiglendrim.supabase.co';
 const SUPABASE_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtxeWFjemtscXZmaWdsZW5kcmltIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAyMjc1MjAsImV4cCI6MjA5NTgwMzUyMH0.zR_rtd8S8HIXIFiMWnfW3-gF1BlmllZEot9pELaSSsg';
+
 
 let sb = null;             // Supabase client
 let CURRENT_USER = null;   // Logged-in user object
@@ -1098,25 +1099,67 @@ async function doReset() {
 
 // ── LOGOUT ────────────────────────────────────────────────────
 async function doCloudLogout() {
-  if (sb) await sb.auth.signOut();
+  if (sb) {
+    try { await sb.auth.signOut(); } catch(_) {}
+  }
   CURRENT_USER = null;
-  // Clear local cache but keep credentials
+  // Clear ALL local data so next user starts fresh
+  clearLocalCacheForLogout();
   showToast('👋 Signed out');
   setTimeout(() => location.reload(), 600);
+}
+
+// ── Clear all local data (used on logout & user-switch) ──
+function clearLocalCacheForLogout() {
+  // Wipe in-memory state
+  RIDERS       = [];
+  entries      = {};
+  fuelEntries  = [];
+  photos       = {};
+  adminName    = '';
+  USERNAME     = '';
+  MPIN_HASH    = '';
+  FARE         = 75;
+  activeFilter = null;
+  // Wipe localStorage keys
+  const keysToRemove = [
+    'rsPWA_riders','rsPWA_entries','rsPWA_fuel','rsPWA_photos',
+    'rsPWA_admin','rsPWA_fare','rsPWA_filter','rsPWA_lastUpdated',
+    'rsPWA_setup','rsPWA_mpin_set','rsPWA_mpin_skipped',
+    'rsPWA_pin' // legacy
+  ];
+  keysToRemove.forEach(k => localStorage.removeItem(k));
+  sessionStorage.removeItem('rsPWA_sess');
 }
 
 // ── AFTER AUTH SUCCESS — LOAD DATA & MIGRATE IF NEEDED ────────
 async function onAuthSuccess(signupName) {
   hideAuthWrap();
-  await loadCloudData();
 
-  // If user just signed up and has local data, offer migration
-  const hasLocal = (RIDERS.length || Object.keys(entries).length || fuelEntries.length);
-  const hasCloud = (RIDERS.length > 0);
-  if (hasLocal && !hasCloud) {
+  // Snapshot local data BEFORE cloud overwrites it (for migration prompt)
+  const localSnapshot = {
+    riders: [...RIDERS],
+    entries: JSON.parse(JSON.stringify(entries)),
+    fuel: [...fuelEntries]
+  };
+  const hadLocal = localSnapshot.riders.length || Object.keys(localSnapshot.entries).length || localSnapshot.fuel.length;
+
+  const ok = await loadCloudData();
+  if (!ok) {
+    showToast('❌ Could not load your data. Please try again.');
+    return;
+  }
+
+  // After cloud load, check if migration is needed
+  const cloudIsEmpty = !RIDERS.length && !Object.keys(entries).length && !fuelEntries.length;
+  if (hadLocal && cloudIsEmpty) {
+    // Restore the snapshot temporarily so migration can read it
+    RIDERS      = localSnapshot.riders;
+    entries     = localSnapshot.entries;
+    fuelEntries = localSnapshot.fuel;
     showConfirm(
-      '☁️ Migrate local data?',
-      'Found data from before. Upload to cloud?',
+      '☁️ Upload existing data?',
+      `Found ${localSnapshot.riders.length} riders + data from before. Upload to your cloud account?`,
       () => migrateLocalToCloud()
     );
   }
@@ -1141,16 +1184,20 @@ async function onAuthSuccess(signupName) {
 // ── LOAD ALL DATA FROM CLOUD ──────────────────────────────────
 async function loadCloudData() {
   if (!CURRENT_USER) return;
+
+  // Detect user-change: if localStorage was tied to a different user, wipe it
+  const lastUid = localStorage.getItem('rsPWA_lastUid');
+  if (lastUid && lastUid !== CURRENT_USER.id) {
+    console.log('[Cloud] User changed — wiping stale local data');
+    clearLocalCacheForLogout();
+  }
+  // Always remember the current user
+  localStorage.setItem('rsPWA_lastUid', CURRENT_USER.id);
+
   try {
     // ── Settings ──
     const { data: s, error: se } = await sb.from('settings').select('*').eq('user_id', CURRENT_USER.id).single();
-    if (se) console.warn('Settings load error:', se);
-    if (s) {
-      adminName = s.admin_name || 'Admin';
-      FARE     = s.default_fare || 75;
-      USERNAME = s.username || '';
-      MPIN_HASH = s.mpin_hash || '';
-    }
+    if (se && se.code !== 'PGRST116') console.warn('Settings load error:', se); // PGRST116 = no row found, OK for new users
 
     // ── Riders ──
     const { data: rs, error: re } = await sb.from('riders').select('*').eq('user_id', CURRENT_USER.id).order('created_at');
@@ -1188,20 +1235,31 @@ async function loadCloudData() {
     if (fe) { console.warn('Fuel load error:', fe); throw fe; }
     const loadedFuel = (fs || []).map(f => ({ date: f.fuel_date, litres: parseFloat(f.litres), amount: f.amount, note: f.note || '' }));
 
-    // ── Only commit to memory + localStorage if ALL queries succeeded ──
+    // ── ALL queries succeeded — overwrite local state with cloud data ──
+    // (Even if cloud is empty, we trust it — it's the source of truth)
     RIDERS      = loadedRiders;
     entries     = loadedEntries;
     fuelEntries = loadedFuel;
+    if (s) {
+      adminName = s.admin_name || 'Admin';
+      FARE      = s.default_fare || 75;
+      USERNAME  = s.username || '';
+      MPIN_HASH = s.mpin_hash || '';
+    }
+    // Persist to localStorage as cache
     localStorage.setItem('rsPWA_riders',  JSON.stringify(RIDERS));
     localStorage.setItem('rsPWA_entries', JSON.stringify(entries));
     localStorage.setItem('rsPWA_fuel',    JSON.stringify(fuelEntries));
+    localStorage.setItem('rsPWA_admin',   adminName);
+    localStorage.setItem('rsPWA_fare',    String(FARE));
 
-    console.log(`[Cloud] Loaded ${RIDERS.length} riders, ${Object.keys(entries).length} dates, ${fuelEntries.length} fuel entries`);
+    console.log(`[Cloud] Loaded ${RIDERS.length} riders, ${Object.keys(entries).length} dates, ${fuelEntries.length} fuel entries for user ${CURRENT_USER.email}`);
+    return true;
 
   } catch (e) {
-    console.error('[Cloud] Load failed — keeping local data:', e);
-    showToast('⚠️ Cloud load failed — using cached data');
-    // Do NOT wipe anything. Keep whatever is in memory/localStorage.
+    console.error('[Cloud] Load failed:', e);
+    showToast('⚠️ Could not load cloud data. Check your connection.');
+    return false;
   }
 }
 
@@ -3270,28 +3328,38 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   // ── Cloud Mode (Supabase) ──
   if (initCloud()) {
-    // Check if user clicked password reset link (URL has #reset)
+    // Check if user clicked password reset link
     if (location.hash === '#reset' || location.hash.includes('type=recovery')) {
       showAuthWrap();
       showAuthScreen('reset');
-      // Clean URL
       history.replaceState(null, '', location.pathname);
     } else {
-      // Check existing session
       const { data: { session } } = await sb.auth.getSession();
       if (session && session.user) {
         CURRENT_USER = session.user;
-        await loadCloudData();
-        renderRiders(); updateStats(); renderFilterBar();
+        const ok = await loadCloudData();
+        if (!ok) {
+          // Cloud failed — force re-login to ensure clean state
+          CURRENT_USER = null;
+          clearLocalCacheForLogout();
+          showAuthWrap();
+          showAuthScreen('login');
+        } else {
+          renderRiders(); updateStats(); renderFilterBar();
+        }
       } else {
+        // No session — wipe any stale data and show login
+        clearLocalCacheForLogout();
+        renderRiders(); updateStats(); renderFilterBar();
         showAuthWrap();
         showAuthScreen('login');
       }
     }
-    // Listen for auth state changes (sign out from another tab, token refresh)
+    // Listen for auth state changes
     sb.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_OUT') {
         CURRENT_USER = null;
+        clearLocalCacheForLogout();
         showAuthWrap();
         showAuthScreen('login');
       }
