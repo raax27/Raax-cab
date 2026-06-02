@@ -585,6 +585,11 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
           <div class="srt"><div class="srn">Lock Historical Fares</div><div class="srd">Freeze old entries at their current fare</div></div>
           <span class="srr">›</span>
         </div>
+        <div class="srow" onclick="relockAllFares()" style="border-top:1px solid var(--border);">
+          <span class="sri">🔓</span>
+          <div class="srt"><div class="srn">Re-lock All Fares</div><div class="srd" style="color:var(--red);">Override and reset all locked fares to current</div></div>
+          <span class="srr">›</span>
+        </div>
       </div>
 
       <div class="sl" style="margin-top:20px">Last Updated</div>
@@ -674,7 +679,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         </div>
       </div>
 
-      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.1.3 — 🔒 Historical Fare Lock</div>
+      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.1.4 — 🔓 Fare Relock</div>
     </div>
 
   </div>
@@ -880,6 +885,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 // Get them from: Supabase Dashboard → Settings → API
 const SUPABASE_URL  = 'https://kqyaczklqvfiglendrim.supabase.co';
 const SUPABASE_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtxeWFjemtscXZmaWdsZW5kcmltIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAyMjc1MjAsImV4cCI6MjA5NTgwMzUyMH0.zR_rtd8S8HIXIFiMWnfW3-gF1BlmllZEot9pELaSSsg';
+
 let sb = null;             // Supabase client
 let CURRENT_USER = null;   // Logged-in user object
 let CLOUD_READY = false;   // True when credentials are configured
@@ -1455,6 +1461,66 @@ async function lockAllPastFares() {
       updateStats();
       if (document.getElementById('screen-summary').classList.contains('active')) renderSummary();
       if (document.getElementById('screen-history').classList.contains('active')) renderHistory();
+    }
+  );
+}
+
+// FORCE re-lock all entries (overrides existing fareAtTime values)
+// Use this when entries were locked at the wrong fare and need correcting
+async function relockAllFares() {
+  const currentFare = FARE;
+  let totalEntries = 0;
+  Object.values(entries).forEach(day => {
+    Object.values(day).forEach(d => {
+      if (d.mP === 'P' || d.eP === 'P') totalEntries++;
+    });
+  });
+  if (totalEntries === 0) {
+    showToast('No entries to relock');
+    return;
+  }
+  showConfirm(
+    'Re-lock all ' + totalEntries + ' entries at ₹' + currentFare + '?',
+    `⚠️ This OVERRIDES any previously locked fares. All ${totalEntries} trip entries will be set to use the rider's current custom fare (if any) OR ₹${currentFare} default. Use this only if entries were locked at a wrong fare.`,
+    async () => {
+      let updated = 0;
+      Object.entries(entries).forEach(([date, day]) => {
+        Object.entries(day).forEach(([name, d]) => {
+          if (d.mP === 'P' || d.eP === 'P') {
+            const rider = RIDERS.find(r => r.name === name);
+            d.fareAtTime = (rider && rider.fare) ? rider.fare : currentFare;
+            updated++;
+          }
+        });
+      });
+      save();
+      // Push to cloud
+      if (CLOUD_READY && CURRENT_USER) {
+        const updates = [];
+        Object.entries(entries).forEach(([date, day]) => {
+          Object.entries(day).forEach(([name, d]) => {
+            if (d.fareAtTime) {
+              updates.push({
+                user_id: CURRENT_USER.id, trip_date: date, rider_name: name,
+                m_present: d.mP||'', m_paid: d.mPaid||'',
+                e_present: d.eP||'', e_paid: d.ePaid||'',
+                fare_at_time: d.fareAtTime,
+                updated_at: new Date().toISOString()
+              });
+            }
+          });
+        });
+        if (updates.length) {
+          for (let i = 0; i < updates.length; i += 500) {
+            await sb.from('trip_entries').upsert(updates.slice(i, i+500), { onConflict: 'user_id,rider_name,trip_date' });
+          }
+        }
+      }
+      showToast('🔓 Re-locked ' + updated + ' entries at ₹' + currentFare);
+      updateStats();
+      if (document.getElementById('screen-summary').classList.contains('active')) renderSummary();
+      if (document.getElementById('screen-history').classList.contains('active')) renderHistory();
+      haptic('success');
     }
   );
 }
@@ -2205,7 +2271,26 @@ function renderSummary(){
 
   const cards = RIDERS.map(r=>{
     const s=calcR(r.name, mo, dt); const img=photos[r.name];
-    const fareLabel = r.fare ? `₹${r.fare}/ride` : `₹${FARE}/ride (default)`;
+    // Compute the ACTUAL effective fare from entries (so label matches the math)
+    let effectiveFare = null;
+    Object.entries(entries).forEach(([date, day]) => {
+      if (dt ? date !== dt : (mo && !date.startsWith(mo))) return;
+      const d = day[r.name];
+      if (!d) return;
+      if (d.mP === 'P' || d.eP === 'P') {
+        const f = entryFare(d, r.name);
+        if (effectiveFare === null) effectiveFare = f;
+        else if (effectiveFare !== f) effectiveFare = 'mixed';
+      }
+    });
+    let fareLabel;
+    if (effectiveFare === 'mixed') {
+      fareLabel = `mixed fares`;
+    } else if (effectiveFare !== null) {
+      fareLabel = `₹${effectiveFare}/ride`;
+    } else {
+      fareLabel = r.fare ? `₹${r.fare}/ride` : `₹${FARE}/ride (default)`;
+    }
     const hasEmail = r.email && r.email.length > 0;
     return `<div class="rsc" data-rider="${esc(r.name)}" style="cursor:${s.pending>0?'pointer':'default'};">
       <div onclick="openRiderPending('${esc(r.name)}','${mo}','${dt}')" style="display:flex;align-items:center;gap:12px;flex:1;">
