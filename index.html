@@ -470,7 +470,10 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
       <div class="ai">🚗</div>
       <div class="at">R<span>aax</span></div>
     </div>
-    <div class="hd" id="hdrDate">—</div>
+    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
+      <div class="hd" id="hdrDate">—</div>
+      <span id="syncBadge" style="display:none;font-size:10px;font-weight:800;padding:2px 8px;border-radius:8px;font-family:'JetBrains Mono',monospace;letter-spacing:.3px;cursor:pointer;" onclick="manualFlushSync()"></span>
+    </div>
   </div>
 
   <div class="qs-bar">
@@ -679,7 +682,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         </div>
       </div>
 
-      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.1.4 — 🔓 Fare Relock</div>
+      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.1.5 — ☁️ Reliable Sync</div>
     </div>
 
   </div>
@@ -886,9 +889,13 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 const SUPABASE_URL  = 'https://kqyaczklqvfiglendrim.supabase.co';
 const SUPABASE_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtxeWFjemtscXZmaWdsZW5kcmltIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAyMjc1MjAsImV4cCI6MjA5NTgwMzUyMH0.zR_rtd8S8HIXIFiMWnfW3-gF1BlmllZEot9pELaSSsg';
 
+
 let sb = null;             // Supabase client
 let CURRENT_USER = null;   // Logged-in user object
 let CLOUD_READY = false;   // True when credentials are configured
+let SYNC_QUEUE = JSON.parse(localStorage.getItem('rsPWA_syncQueue') || '[]'); // Pending cloud writes
+let SYNC_STATE = 'idle';   // 'idle' | 'syncing' | 'error' | 'offline'
+let SYNC_RETRY_TIMER = null;
 let USERNAME = '';         // Lowercase username for quick login
 let MPIN_HASH = '';        // Hashed 4-digit MPIN for quick re-auth
 
@@ -1130,15 +1137,18 @@ function clearLocalCacheForLogout() {
   MPIN_HASH    = '';
   FARE         = 75;
   activeFilter = null;
+  SYNC_QUEUE   = [];
+  SYNC_STATE   = 'idle';
   // Wipe localStorage keys
   const keysToRemove = [
     'rsPWA_riders','rsPWA_entries','rsPWA_fuel','rsPWA_photos',
     'rsPWA_admin','rsPWA_fare','rsPWA_filter','rsPWA_lastUpdated',
-    'rsPWA_setup','rsPWA_mpin_set','rsPWA_mpin_skipped',
+    'rsPWA_setup','rsPWA_mpin_set','rsPWA_mpin_skipped','rsPWA_syncQueue',
     'rsPWA_pin' // legacy
   ];
   keysToRemove.forEach(k => localStorage.removeItem(k));
   sessionStorage.removeItem('rsPWA_sess');
+  updateSyncBadge();
 }
 
 // ── AFTER AUTH SUCCESS — LOAD DATA & MIGRATE IF NEEDED ────────
@@ -1181,6 +1191,12 @@ async function onAuthSuccess(signupName) {
   renderRiders(); updateStats(); renderFilterBar();
   goTo('log');
 
+  // Flush any pending sync queue (e.g. if offline edits accumulated)
+  if (SYNC_QUEUE.length) {
+    scheduleSyncFlush(500);
+  }
+  updateSyncBadge();
+
   // Prompt to set MPIN if not yet configured (and not skipped)
   setTimeout(() => {
     const skipped = localStorage.getItem('rsPWA_mpin_skipped') === '1';
@@ -1188,6 +1204,20 @@ async function onAuthSuccess(signupName) {
       showMpinModal('setup');
     }
   }, 1000);
+}
+
+// Manual sync trigger — user can tap the badge to retry
+function manualFlushSync() {
+  if (!CLOUD_READY || !CURRENT_USER) {
+    showToast('Not signed in');
+    return;
+  }
+  if (SYNC_QUEUE.length === 0) {
+    showToast('✅ All synced');
+    return;
+  }
+  showToast('🔄 Retrying ' + SYNC_QUEUE.length + ' pending…');
+  scheduleSyncFlush(50);
 }
 
 // ── LOAD ALL DATA FROM CLOUD ──────────────────────────────────
@@ -1274,47 +1304,198 @@ async function loadCloudData() {
 
 // ── SAVE FUNCTIONS (push to cloud) ────────────────────────────
 async function cloudSaveSettings() {
-  if (!CURRENT_USER || !sb) return;
-  await sb.from('settings').upsert({
-    user_id: CURRENT_USER.id, admin_name: adminName, default_fare: FARE, updated_at: new Date().toISOString()
-  });
+  if (!CURRENT_USER || !sb) return { ok: false, error: 'Not logged in' };
+  try {
+    const { error } = await sb.from('settings').upsert({
+      user_id: CURRENT_USER.id, admin_name: adminName, default_fare: FARE, updated_at: new Date().toISOString()
+    });
+    if (error) { console.error('[Cloud] Save settings failed:', error); return { ok: false, error }; }
+    return { ok: true };
+  } catch(e) { console.error('[Cloud] Save settings threw:', e); return { ok: false, error: e }; }
 }
 
 async function cloudUpsertRider(r) {
-  if (!CURRENT_USER || !sb) return;
-  await sb.from('riders').upsert({
-    user_id: CURRENT_USER.id, name: r.name, color: r.clr, fare: r.fare || null,
-    email: r.email || null, phone: r.phone || null
-  }, { onConflict: 'user_id,name' });
+  if (!CURRENT_USER || !sb) return { ok: false, error: 'Not logged in' };
+  try {
+    const { error } = await sb.from('riders').upsert({
+      user_id: CURRENT_USER.id, name: r.name, color: r.clr, fare: r.fare || null,
+      email: r.email || null, phone: r.phone || null
+    }, { onConflict: 'user_id,name' });
+    if (error) { console.error('[Cloud] Save rider failed:', error); return { ok: false, error }; }
+    return { ok: true };
+  } catch(e) { console.error('[Cloud] Save rider threw:', e); return { ok: false, error: e }; }
 }
 
 async function cloudDeleteRider(name) {
-  if (!CURRENT_USER || !sb) return;
-  await sb.from('riders').delete().eq('user_id', CURRENT_USER.id).eq('name', name);
+  if (!CURRENT_USER || !sb) return { ok: false };
+  try {
+    const { error } = await sb.from('riders').delete().eq('user_id', CURRENT_USER.id).eq('name', name);
+    if (error) { console.error('[Cloud] Delete rider failed:', error); return { ok: false, error }; }
+    return { ok: true };
+  } catch(e) { console.error('[Cloud] Delete rider threw:', e); return { ok: false, error: e }; }
 }
 
 async function cloudSaveTripEntry(date, riderName, d) {
-  if (!CURRENT_USER || !sb) return;
-  await sb.from('trip_entries').upsert({
-    user_id: CURRENT_USER.id, trip_date: date, rider_name: riderName,
-    m_present: d.mP||'', m_paid: d.mPaid||'', e_present: d.eP||'', e_paid: d.ePaid||'',
-    fare_at_time: d.fareAtTime || null,
-    updated_at: new Date().toISOString()
-  }, { onConflict: 'user_id,rider_name,trip_date' });
+  if (!CURRENT_USER || !sb) return { ok: false, error: 'Not logged in' };
+  try {
+    const { error } = await sb.from('trip_entries').upsert({
+      user_id: CURRENT_USER.id, trip_date: date, rider_name: riderName,
+      m_present: d.mP||'', m_paid: d.mPaid||'', e_present: d.eP||'', e_paid: d.ePaid||'',
+      fare_at_time: d.fareAtTime || null,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'user_id,rider_name,trip_date' });
+    if (error) { console.error('[Cloud] Save trip failed:', error, { date, riderName, d }); return { ok: false, error }; }
+    return { ok: true };
+  } catch(e) { console.error('[Cloud] Save trip threw:', e); return { ok: false, error: e }; }
 }
 
 async function cloudSaveFuel(f) {
-  if (!CURRENT_USER || !sb) return;
-  await sb.from('fuel_entries').insert({
-    user_id: CURRENT_USER.id, fuel_date: f.date, litres: f.litres, amount: f.amount, note: f.note || null
-  });
+  if (!CURRENT_USER || !sb) return { ok: false, error: 'Not logged in' };
+  try {
+    const { error } = await sb.from('fuel_entries').insert({
+      user_id: CURRENT_USER.id, fuel_date: f.date, litres: f.litres, amount: f.amount, note: f.note || null
+    });
+    if (error) { console.error('[Cloud] Save fuel failed:', error); return { ok: false, error }; }
+    return { ok: true };
+  } catch(e) { console.error('[Cloud] Save fuel threw:', e); return { ok: false, error: e }; }
 }
 
 async function cloudDeleteFuel(date, amount, litres) {
-  if (!CURRENT_USER || !sb) return;
-  await sb.from('fuel_entries').delete()
-    .eq('user_id', CURRENT_USER.id).eq('fuel_date', date).eq('amount', amount).eq('litres', litres);
+  if (!CURRENT_USER || !sb) return { ok: false };
+  try {
+    const { error } = await sb.from('fuel_entries').delete()
+      .eq('user_id', CURRENT_USER.id).eq('fuel_date', date).eq('amount', amount).eq('litres', litres);
+    if (error) { console.error('[Cloud] Delete fuel failed:', error); return { ok: false, error }; }
+    return { ok: true };
+  } catch(e) { console.error('[Cloud] Delete fuel threw:', e); return { ok: false, error: e }; }
 }
+
+// ═══════════════════════════════════════════════════════════════
+// SYNC QUEUE — retries failed cloud writes
+// ═══════════════════════════════════════════════════════════════
+function persistSyncQueue() {
+  localStorage.setItem('rsPWA_syncQueue', JSON.stringify(SYNC_QUEUE));
+  updateSyncBadge();
+}
+
+function queueSync(op) {
+  // op = { type:'trip'|'rider'|'settings'|'fuelAdd'|'fuelDel', payload:{...}, ts }
+  op.ts = op.ts || Date.now();
+  op.tries = op.tries || 0;
+  SYNC_QUEUE.push(op);
+  persistSyncQueue();
+  scheduleSyncFlush(100);
+}
+
+function scheduleSyncFlush(ms) {
+  if (SYNC_RETRY_TIMER) return;
+  SYNC_RETRY_TIMER = setTimeout(() => {
+    SYNC_RETRY_TIMER = null;
+    flushSyncQueue();
+  }, ms);
+}
+
+async function flushSyncQueue() {
+  if (!CLOUD_READY || !CURRENT_USER) {
+    SYNC_STATE = 'offline'; updateSyncBadge();
+    return;
+  }
+  if (!navigator.onLine) {
+    SYNC_STATE = 'offline'; updateSyncBadge();
+    return;
+  }
+  if (!SYNC_QUEUE.length) {
+    SYNC_STATE = 'idle'; updateSyncBadge();
+    return;
+  }
+  SYNC_STATE = 'syncing'; updateSyncBadge();
+  let stillFailed = [];
+  for (const op of SYNC_QUEUE) {
+    let res;
+    if (op.type === 'trip')         res = await cloudSaveTripEntry(op.payload.date, op.payload.rider, op.payload.d);
+    else if (op.type === 'rider')   res = await cloudUpsertRider(op.payload);
+    else if (op.type === 'riderDel')res = await cloudDeleteRider(op.payload.name);
+    else if (op.type === 'settings')res = await cloudSaveSettings();
+    else if (op.type === 'fuelAdd') res = await cloudSaveFuel(op.payload);
+    else if (op.type === 'fuelDel') res = await cloudDeleteFuel(op.payload.date, op.payload.amount, op.payload.litres);
+    else res = { ok: true }; // unknown — drop
+
+    if (!res || !res.ok) {
+      op.tries = (op.tries || 0) + 1;
+      if (op.tries < 5) stillFailed.push(op);
+      else console.warn('[Cloud] Dropping op after 5 failed tries:', op);
+    }
+  }
+  SYNC_QUEUE = stillFailed;
+  persistSyncQueue();
+  if (SYNC_QUEUE.length) {
+    SYNC_STATE = 'error';
+    updateSyncBadge();
+    // Show one-time toast so user knows something's wrong
+    if (!window._syncWarnedThisSession) {
+      window._syncWarnedThisSession = true;
+      showToast('⚠️ Cloud sync failed — tap badge to retry');
+    }
+    // Retry with backoff
+    scheduleSyncFlush(8000);
+  } else {
+    SYNC_STATE = 'idle';
+    updateSyncBadge();
+  }
+}
+
+function updateSyncBadge() {
+  const el = document.getElementById('syncBadge');
+  if (!el) return;
+  if (!CLOUD_READY) { el.style.display = 'none'; return; }
+  if (!CURRENT_USER) { el.style.display = 'none'; return; }
+  if (SYNC_STATE === 'idle' && SYNC_QUEUE.length === 0) {
+    el.style.display = 'none';
+    return;
+  }
+  el.style.display = 'inline-flex';
+  if (SYNC_STATE === 'syncing') {
+    el.textContent = '↻ Syncing…';
+    el.style.background = 'rgba(168,85,247,.2)';
+    el.style.color = '#a855f7';
+  } else if (SYNC_STATE === 'error') {
+    el.textContent = '⚠ ' + SYNC_QUEUE.length + ' pending';
+    el.style.background = 'rgba(248,81,73,.2)';
+    el.style.color = '#f87149';
+  } else if (SYNC_STATE === 'offline') {
+    el.textContent = '📵 Offline';
+    el.style.background = 'rgba(110,118,129,.2)';
+    el.style.color = '#9ca3af';
+  } else {
+    el.style.display = 'none';
+  }
+}
+
+// Wrap a cloud call: tries immediately, queues on failure for retry
+async function cloudWriteOrQueue(op) {
+  if (!CLOUD_READY || !CURRENT_USER) return;
+  if (!navigator.onLine) {
+    queueSync(op);
+    return;
+  }
+  let res;
+  if (op.type === 'trip')          res = await cloudSaveTripEntry(op.payload.date, op.payload.rider, op.payload.d);
+  else if (op.type === 'rider')    res = await cloudUpsertRider(op.payload);
+  else if (op.type === 'riderDel') res = await cloudDeleteRider(op.payload.name);
+  else if (op.type === 'settings') res = await cloudSaveSettings();
+  else if (op.type === 'fuelAdd')  res = await cloudSaveFuel(op.payload);
+  else if (op.type === 'fuelDel')  res = await cloudDeleteFuel(op.payload.date, op.payload.amount, op.payload.litres);
+  if (!res || !res.ok) {
+    queueSync(op);
+  } else {
+    // Success — also flush any pending queue (network came back)
+    if (SYNC_QUEUE.length) scheduleSyncFlush(100);
+  }
+}
+
+// Online/offline event listeners
+window.addEventListener('online',  () => { SYNC_STATE = 'idle'; updateSyncBadge(); scheduleSyncFlush(500); });
+window.addEventListener('offline', () => { SYNC_STATE = 'offline'; updateSyncBadge(); });
 
 // ── MIGRATE LOCAL DATA TO CLOUD ───────────────────────────────
 async function migrateLocalToCloud() {
@@ -1383,7 +1564,7 @@ function saveFareSetting() {
     if (document.getElementById('screen-summary').classList.contains('active')) renderSummary();
     if (document.getElementById('screen-history').classList.contains('active')) renderHistory();
     showToast('💰 Fare updated to ₹' + newFare);
-    if (CLOUD_READY && CURRENT_USER) cloudSaveSettings().catch(()=>{});
+    if (CLOUD_READY && CURRENT_USER) cloudWriteOrQueue({ type: 'settings' });
   };
 
   if (unlockedCount > 0) {
@@ -1533,9 +1714,9 @@ let adminName    = localStorage.getItem('rsPWA_admin') || '';
 
 function saveRiders()  {
   localStorage.setItem('rsPWA_riders',  JSON.stringify(RIDERS));
-  // Push to cloud (async)
+  // Push to cloud (queued with retry)
   if (CLOUD_READY && CURRENT_USER) {
-    RIDERS.forEach(r => cloudUpsertRider(r).catch(()=>{}));
+    RIDERS.forEach(r => cloudWriteOrQueue({ type: 'rider', payload: r }));
   }
 }
 function saveFilter()  { localStorage.setItem('rsPWA_filter',  JSON.stringify(activeFilter)); }
@@ -2111,13 +2292,22 @@ function tog(rider,field,val) {
     delete day[rider].fareAtTime;
   }
   save(); renderRiders(); updateStats();
-  // Push to cloud (async, doesn't block UI)
-  if (CLOUD_READY && CURRENT_USER) cloudSaveTripEntry(date, rider, day[rider]).catch(()=>{});
+  // Push to cloud (queued if offline / retries on failure)
+  if (CLOUD_READY && CURRENT_USER) {
+    cloudWriteOrQueue({ type: 'trip', payload: { date, rider, d: day[rider] } });
+  }
 }
 function onDateChange(){renderRiders();}
 function saveEntry(){
   const date=document.getElementById('logDate').value;
-  getDay(date); save(); updateStats();
+  const day = getDay(date);
+  save(); updateStats();
+  // Push every rider's entry for this date to the cloud
+  if (CLOUD_READY && CURRENT_USER) {
+    Object.entries(day).forEach(([riderName, d]) => {
+      cloudWriteOrQueue({ type: 'trip', payload: { date, rider: riderName, d } });
+    });
+  }
   showToast('✅ Saved — '+formatDate(date));
 }
 
@@ -2688,14 +2878,14 @@ function saveFuelEntry() {
   if (editingFuelIdx === null) {
     fuelEntries.push(entry);
     showToast('⛽ Fill-up added!');
-    if (CLOUD_READY && CURRENT_USER) cloudSaveFuel(entry).catch(()=>{});
+    if (CLOUD_READY && CURRENT_USER) cloudWriteOrQueue({ type: 'fuelAdd', payload: entry });
   } else {
     const oldEntry = fuelEntries[editingFuelIdx];
     fuelEntries[editingFuelIdx] = entry;
     showToast('⛽ Fill-up updated!');
     if (CLOUD_READY && CURRENT_USER) {
-      cloudDeleteFuel(oldEntry.date, oldEntry.amount, oldEntry.litres)
-        .then(() => cloudSaveFuel(entry)).catch(()=>{});
+      cloudWriteOrQueue({ type: 'fuelDel', payload: oldEntry });
+      cloudWriteOrQueue({ type: 'fuelAdd', payload: entry });
     }
   }
   // Sort by date descending
@@ -2713,7 +2903,7 @@ function deleteFuelEntry() {
     fuelEntries.splice(editingFuelIdx, 1);
     saveFuel(); closeFuelModal(); renderFuel();
     if (document.getElementById('screen-summary').classList.contains('active')) renderSummary();
-    if (CLOUD_READY && CURRENT_USER && oldEntry) cloudDeleteFuel(oldEntry.date, oldEntry.amount, oldEntry.litres).catch(()=>{});
+    if (CLOUD_READY && CURRENT_USER && oldEntry) cloudWriteOrQueue({ type: 'fuelDel', payload: oldEntry });
     showToast('🗑️ Fill-up deleted');
   });
 }
