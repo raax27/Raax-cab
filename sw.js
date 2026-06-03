@@ -1,5 +1,5 @@
 // Bump CACHE version on every release to force update
-const CACHE = 'raax-v17-relock-fares';
+const CACHE = 'raax-v18-sync-queue';
 
 const STATIC_ASSETS = [
   './manifest.json',
