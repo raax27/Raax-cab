@@ -682,7 +682,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         </div>
       </div>
 
-      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.1.5 — ☁️ Reliable Sync</div>
+      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.1.7 — 🔍 Full Audit</div>
     </div>
 
   </div>
@@ -1115,11 +1115,20 @@ async function doReset() {
 
 // ── LOGOUT ────────────────────────────────────────────────────
 async function doCloudLogout() {
+  // Warn + flush if pending changes
+  if (CLOUD_READY && CURRENT_USER && SYNC_QUEUE.length > 0) {
+    showToast('⏳ Saving ' + SYNC_QUEUE.length + ' pending changes…');
+    try { await flushSyncQueueAndWait(); } catch(_) {}
+    if (SYNC_QUEUE.length > 0) {
+      // Still have unsaved — confirm with user before destroying
+      const proceed = confirm('You have ' + SYNC_QUEUE.length + ' unsaved changes that couldn\'t sync. Sign out anyway? (Changes will be lost)');
+      if (!proceed) return;
+    }
+  }
   if (sb) {
     try { await sb.auth.signOut(); } catch(_) {}
   }
   CURRENT_USER = null;
-  // Clear ALL local data so next user starts fresh
   clearLocalCacheForLogout();
   showToast('👋 Signed out');
   setTimeout(() => location.reload(), 600);
@@ -1232,6 +1241,13 @@ async function loadCloudData() {
   }
   // Always remember the current user
   localStorage.setItem('rsPWA_lastUid', CURRENT_USER.id);
+
+  // CRITICAL: flush any pending sync writes BEFORE reading.
+  // Otherwise we'd overwrite local unsaved changes with stale cloud data.
+  if (SYNC_QUEUE.length > 0) {
+    console.log('[Cloud] Flushing ' + SYNC_QUEUE.length + ' pending writes before read…');
+    await flushSyncQueueAndWait();
+  }
 
   try {
     // ── Settings ──
@@ -1379,9 +1395,8 @@ function persistSyncQueue() {
 }
 
 function queueSync(op) {
-  // op = { type:'trip'|'rider'|'settings'|'fuelAdd'|'fuelDel', payload:{...}, ts }
-  op.ts = op.ts || Date.now();
-  op.tries = op.tries || 0;
+  // Deep-clone payload to prevent mutation from concurrent edits
+  op = { type: op.type, payload: JSON.parse(JSON.stringify(op.payload || {})), ts: op.ts || Date.now(), tries: op.tries || 0 };
   SYNC_QUEUE.push(op);
   persistSyncQueue();
   scheduleSyncFlush(100);
@@ -1393,6 +1408,13 @@ function scheduleSyncFlush(ms) {
     SYNC_RETRY_TIMER = null;
     flushSyncQueue();
   }, ms);
+}
+
+// Awaitable version — flushes immediately, callers can await
+async function flushSyncQueueAndWait() {
+  // Cancel any pending timer; we'll handle it now
+  if (SYNC_RETRY_TIMER) { clearTimeout(SYNC_RETRY_TIMER); SYNC_RETRY_TIMER = null; }
+  await flushSyncQueue();
 }
 
 async function flushSyncQueue() {
@@ -1474,6 +1496,8 @@ function updateSyncBadge() {
 // Wrap a cloud call: tries immediately, queues on failure for retry
 async function cloudWriteOrQueue(op) {
   if (!CLOUD_READY || !CURRENT_USER) return;
+  // Deep-copy the payload immediately so subsequent local changes don't mutate what we send
+  op = { type: op.type, payload: JSON.parse(JSON.stringify(op.payload || {})), ts: Date.now() };
   if (!navigator.onLine) {
     queueSync(op);
     return;
@@ -1503,36 +1527,54 @@ async function migrateLocalToCloud() {
   showToast('☁️ Uploading data to cloud…');
   try {
     if (RIDERS.length) {
-      const rows = RIDERS.map(r => ({ user_id: CURRENT_USER.id, name: r.name, color: r.clr, fare: r.fare || null }));
-      await sb.from('riders').upsert(rows, { onConflict: 'user_id,name' });
+      const rows = RIDERS.map(r => ({
+        user_id: CURRENT_USER.id, name: r.name, color: r.clr,
+        fare: r.fare || null, email: r.email || null, phone: r.phone || null
+      }));
+      const { error } = await sb.from('riders').upsert(rows, { onConflict: 'user_id,name' });
+      if (error) throw error;
     }
     const tripRows = [];
     Object.entries(entries).forEach(([date, day]) => {
       Object.entries(day).forEach(([name, d]) => {
         if (!d.mP && !d.eP) return;
+        // Lock fare on migration if not already locked
+        let fareAtTime = d.fareAtTime;
+        if ((d.mP === 'P' || d.eP === 'P') && !fareAtTime) {
+          const rider = RIDERS.find(r => r.name === name);
+          fareAtTime = (rider && rider.fare) ? rider.fare : FARE;
+          d.fareAtTime = fareAtTime; // also update local
+        }
         tripRows.push({
           user_id: CURRENT_USER.id, trip_date: date, rider_name: name,
-          m_present: d.mP||'', m_paid: d.mPaid||'', e_present: d.eP||'', e_paid: d.ePaid||''
+          m_present: d.mP||'', m_paid: d.mPaid||'',
+          e_present: d.eP||'', e_paid: d.ePaid||'',
+          fare_at_time: fareAtTime || null,
+          updated_at: new Date().toISOString()
         });
       });
     });
     if (tripRows.length) {
       // Upsert in batches of 500
       for (let i = 0; i < tripRows.length; i += 500) {
-        await sb.from('trip_entries').upsert(tripRows.slice(i, i+500), { onConflict: 'user_id,rider_name,trip_date' });
+        const { error } = await sb.from('trip_entries').upsert(tripRows.slice(i, i+500), { onConflict: 'user_id,rider_name,trip_date' });
+        if (error) throw error;
       }
     }
     if (fuelEntries.length) {
       const rows = fuelEntries.map(f => ({ user_id: CURRENT_USER.id, fuel_date: f.date, litres: f.litres, amount: f.amount, note: f.note || null }));
-      await sb.from('fuel_entries').insert(rows);
+      const { error } = await sb.from('fuel_entries').insert(rows);
+      if (error) throw error;
     }
+    // Persist updated fareAtTime back to localStorage
+    save();
     await cloudSaveSettings();
     showToast('✅ Migration complete!');
     await loadCloudData();
     renderRiders(); updateStats();
   } catch(e) {
-    console.error('Migration error:', e);
-    showToast('⚠️ Migration failed — see console');
+    console.error('[Cloud] Migration error:', e);
+    showToast('⚠️ Migration failed: ' + (e.message || 'see console'));
   }
 }
 
@@ -2298,17 +2340,32 @@ function tog(rider,field,val) {
   }
 }
 function onDateChange(){renderRiders();}
-function saveEntry(){
+async function saveEntry(){
   const date=document.getElementById('logDate').value;
   const day = getDay(date);
   save(); updateStats();
-  // Push every rider's entry for this date to the cloud
-  if (CLOUD_READY && CURRENT_USER) {
-    Object.entries(day).forEach(([riderName, d]) => {
-      cloudWriteOrQueue({ type: 'trip', payload: { date, rider: riderName, d } });
-    });
+
+  if (!CLOUD_READY || !CURRENT_USER) {
+    showToast('✅ Saved locally — ' + formatDate(date));
+    return;
   }
-  showToast('✅ Saved — '+formatDate(date));
+
+  // Try immediate push — wait for it so we can give honest feedback
+  showToast('💾 Saving — ' + formatDate(date));
+  let failures = 0;
+  for (const [riderName, d] of Object.entries(day)) {
+    const res = await cloudSaveTripEntry(date, riderName, d);
+    if (!res || !res.ok) {
+      failures++;
+      // Queue for retry
+      queueSync({ type: 'trip', payload: { date, rider: riderName, d: JSON.parse(JSON.stringify(d)) } });
+    }
+  }
+  if (failures === 0) {
+    showToast('✅ Saved to cloud — ' + formatDate(date));
+  } else {
+    showToast('⚠️ ' + failures + ' didn\'t sync — will retry');
+  }
 }
 
 // ── PHOTO ─────────────────────────────────────────────────────
@@ -2637,12 +2694,25 @@ function saveRider(){
       });
       if (photos[oldName]) { photos[name] = photos[oldName]; delete photos[oldName]; }
       save(); saveP();
-      // Update cloud trip_entries to new rider_name
+      // Sync rename to cloud — order matters: delete old rider FIRST (no FK so trips stay),
+      // then update trip rider_name, then upsert new rider via saveRiders() below
       if (CLOUD_READY && CURRENT_USER) {
-        sb.from('trip_entries').update({ rider_name: name })
-          .eq('user_id', CURRENT_USER.id).eq('rider_name', oldName).then(()=>{});
-        // Delete old rider row, will be replaced by upsert below
-        sb.from('riders').delete().eq('user_id', CURRENT_USER.id).eq('name', oldName).then(()=>{});
+        (async () => {
+          try {
+            // 1. Update trip entries to new name (must complete before delete to avoid FK conflicts on re-upsert)
+            const { error: tErr } = await sb.from('trip_entries').update({ rider_name: name })
+              .eq('user_id', CURRENT_USER.id).eq('rider_name', oldName);
+            if (tErr) console.error('[Cloud] Rename trip_entries failed:', tErr);
+            // 2. Delete old rider row
+            const { error: rErr } = await sb.from('riders').delete()
+              .eq('user_id', CURRENT_USER.id).eq('name', oldName);
+            if (rErr) console.error('[Cloud] Delete old rider failed:', rErr);
+            // 3. saveRiders() below will upsert the new one
+          } catch(e) {
+            console.error('[Cloud] Rename sync error:', e);
+            queueSync({ type: 'rider', payload: RIDERS[editingRiderIdx] });
+          }
+        })();
       }
     }
     RIDERS[editingRiderIdx] = { name, clr: selectedColor, email, phone };
@@ -3376,9 +3446,23 @@ async function _doImport(bytes) {
   }
 
   // ── 7. Merge into app state + persist ──
+  // For imported entries, lock fare to current rider/default fare so future changes don't affect them
   Object.entries(importedEntries).forEach(([date, dayData]) => {
     if (!entries[date]) entries[date]={};
-    Object.assign(entries[date], dayData);
+    Object.entries(dayData).forEach(([riderName, d]) => {
+      // Only set fareAtTime if at least one slot is Present
+      if ((d.mP === 'P' || d.eP === 'P') && !d.fareAtTime) {
+        // Use rider's custom fare (from import or existing) or fall back to default
+        const importedRider = importedRiders.find(r => r.name === riderName);
+        const existingRider = RIDERS.find(r => r.name === riderName);
+        const lockedFare =
+          (existingRider && existingRider.fare) ? existingRider.fare :
+          (importedRider && importedRider.fare) ? importedRider.fare :
+          FARE;
+        d.fareAtTime = lockedFare;
+      }
+      entries[date][riderName] = d;
+    });
   });
   importedRiders.forEach(ir => {
     if (!RIDERS.find(r=>r.name===ir.name)) RIDERS.push(ir);
@@ -3398,6 +3482,58 @@ async function _doImport(bytes) {
   entries     = JSON.parse(localStorage.getItem('rsPWA_entries'));
   RIDERS      = JSON.parse(localStorage.getItem('rsPWA_riders'));
   fuelEntries = JSON.parse(localStorage.getItem('rsPWA_fuel'));
+
+  // ── 7b. Push imported data to cloud (if logged in) ──
+  if (CLOUD_READY && CURRENT_USER) {
+    showToast('☁️ Uploading imported data to cloud…');
+    try {
+      // Push riders first
+      for (const r of importedRiders) {
+        const existing = RIDERS.find(x => x.name === r.name);
+        if (existing) await cloudUpsertRider(existing);
+      }
+      // Push trip entries in batches
+      const tripRows = [];
+      Object.entries(importedEntries).forEach(([date, dayData]) => {
+        Object.entries(dayData).forEach(([riderName, d]) => {
+          if (!d.mP && !d.eP) return;
+          tripRows.push({
+            user_id: CURRENT_USER.id, trip_date: date, rider_name: riderName,
+            m_present: d.mP||'', m_paid: d.mPaid||'',
+            e_present: d.eP||'', e_paid: d.ePaid||'',
+            fare_at_time: d.fareAtTime || null,
+            updated_at: new Date().toISOString()
+          });
+        });
+      });
+      if (tripRows.length) {
+        for (let i = 0; i < tripRows.length; i += 500) {
+          const { error } = await sb.from('trip_entries').upsert(
+            tripRows.slice(i, i+500),
+            { onConflict: 'user_id,rider_name,trip_date' }
+          );
+          if (error) {
+            console.error('[Cloud] Import trip upsert failed:', error);
+            // Queue what failed for retry
+            tripRows.slice(i, i+500).forEach(row => {
+              queueSync({ type: 'trip', payload: {
+                date: row.trip_date, rider: row.rider_name,
+                d: { mP: row.m_present, mPaid: row.m_paid, eP: row.e_present, ePaid: row.e_paid, fareAtTime: row.fare_at_time }
+              }});
+            });
+          }
+        }
+      }
+      // Push fuel entries
+      for (const f of importedFuel) {
+        await cloudSaveFuel(f);
+      }
+      showToast('☁️ Cloud sync complete');
+    } catch(e) {
+      console.error('[Cloud] Import sync error:', e);
+      showToast('⚠️ Some data not synced — will retry');
+    }
+  }
 
   stampLastUpdated();
   activeFilter = null;
