@@ -682,7 +682,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         </div>
       </div>
 
-      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.1.7 — 🔍 Full Audit</div>
+      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.1.8 — 💾 Persistent Sync Queue</div>
     </div>
 
   </div>
@@ -888,7 +888,6 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 // Get them from: Supabase Dashboard → Settings → API
 const SUPABASE_URL  = 'https://kqyaczklqvfiglendrim.supabase.co';
 const SUPABASE_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtxeWFjemtscXZmaWdsZW5kcmltIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAyMjc1MjAsImV4cCI6MjA5NTgwMzUyMH0.zR_rtd8S8HIXIFiMWnfW3-gF1BlmllZEot9pELaSSsg';
-
 
 let sb = null;             // Supabase client
 let CURRENT_USER = null;   // Logged-in user object
@@ -1396,10 +1395,69 @@ function persistSyncQueue() {
 
 function queueSync(op) {
   // Deep-clone payload to prevent mutation from concurrent edits
-  op = { type: op.type, payload: JSON.parse(JSON.stringify(op.payload || {})), ts: op.ts || Date.now(), tries: op.tries || 0 };
-  SYNC_QUEUE.push(op);
+  op = {
+    id: op.id || ('op_' + Date.now() + '_' + Math.random().toString(36).substr(2,6)),
+    type: op.type,
+    payload: JSON.parse(JSON.stringify(op.payload || {})),
+    ts: op.ts || Date.now(),
+    tries: op.tries || 0
+  };
+  // De-dup: for trip writes on same (date,rider), replace existing queued op
+  if (op.type === 'trip') {
+    const idx = SYNC_QUEUE.findIndex(q =>
+      q.type === 'trip' &&
+      q.payload.date === op.payload.date &&
+      q.payload.rider === op.payload.rider
+    );
+    if (idx >= 0) SYNC_QUEUE[idx] = op;
+    else SYNC_QUEUE.push(op);
+  } else {
+    SYNC_QUEUE.push(op);
+  }
   persistSyncQueue();
   scheduleSyncFlush(100);
+  return op.id;
+}
+
+// Enqueue (persisted immediately to localStorage) then attempt immediate push.
+// If push succeeds, op is removed from queue. If it fails or browser closes,
+// the queued op survives for retry on next load.
+async function enqueueAndPush(op) {
+  if (!CLOUD_READY || !CURRENT_USER) return;
+  const opId = queueSync(op);  // SYNCHRONOUSLY persists to localStorage
+  updateSyncBadge();
+
+  if (!navigator.onLine) {
+    SYNC_STATE = 'offline';
+    updateSyncBadge();
+    return;
+  }
+
+  // Attempt immediate push
+  const queuedOp = SYNC_QUEUE.find(q => q.id === opId);
+  if (!queuedOp) return; // already flushed by another path
+  let res;
+  try {
+    if (queuedOp.type === 'trip')          res = await cloudSaveTripEntry(queuedOp.payload.date, queuedOp.payload.rider, queuedOp.payload.d);
+    else if (queuedOp.type === 'rider')    res = await cloudUpsertRider(queuedOp.payload);
+    else if (queuedOp.type === 'riderDel') res = await cloudDeleteRider(queuedOp.payload.name);
+    else if (queuedOp.type === 'settings') res = await cloudSaveSettings();
+    else if (queuedOp.type === 'fuelAdd')  res = await cloudSaveFuel(queuedOp.payload);
+    else if (queuedOp.type === 'fuelDel')  res = await cloudDeleteFuel(queuedOp.payload.date, queuedOp.payload.amount, queuedOp.payload.litres);
+  } catch(e) {
+    res = { ok: false, error: e };
+  }
+  if (res && res.ok) {
+    // Success — remove from queue
+    SYNC_QUEUE = SYNC_QUEUE.filter(q => q.id !== opId);
+    persistSyncQueue();
+    if (SYNC_QUEUE.length === 0) { SYNC_STATE = 'idle'; updateSyncBadge(); }
+  } else {
+    // Stay in queue for retry
+    SYNC_STATE = 'error';
+    updateSyncBadge();
+    scheduleSyncFlush(5000);
+  }
 }
 
 function scheduleSyncFlush(ms) {
@@ -1431,24 +1489,36 @@ async function flushSyncQueue() {
     return;
   }
   SYNC_STATE = 'syncing'; updateSyncBadge();
-  let stillFailed = [];
-  for (const op of SYNC_QUEUE) {
-    let res;
-    if (op.type === 'trip')         res = await cloudSaveTripEntry(op.payload.date, op.payload.rider, op.payload.d);
-    else if (op.type === 'rider')   res = await cloudUpsertRider(op.payload);
-    else if (op.type === 'riderDel')res = await cloudDeleteRider(op.payload.name);
-    else if (op.type === 'settings')res = await cloudSaveSettings();
-    else if (op.type === 'fuelAdd') res = await cloudSaveFuel(op.payload);
-    else if (op.type === 'fuelDel') res = await cloudDeleteFuel(op.payload.date, op.payload.amount, op.payload.litres);
-    else res = { ok: true }; // unknown — drop
+  // Take a snapshot so concurrent enqueues don't get processed twice
+  const snapshot = SYNC_QUEUE.slice();
+  const succeededIds = new Set();
+  const failed = new Map(); // id -> updated op with tries++
 
-    if (!res || !res.ok) {
-      op.tries = (op.tries || 0) + 1;
-      if (op.tries < 5) stillFailed.push(op);
-      else console.warn('[Cloud] Dropping op after 5 failed tries:', op);
+  for (const op of snapshot) {
+    let res;
+    try {
+      if (op.type === 'trip')         res = await cloudSaveTripEntry(op.payload.date, op.payload.rider, op.payload.d);
+      else if (op.type === 'rider')   res = await cloudUpsertRider(op.payload);
+      else if (op.type === 'riderDel')res = await cloudDeleteRider(op.payload.name);
+      else if (op.type === 'settings')res = await cloudSaveSettings();
+      else if (op.type === 'fuelAdd') res = await cloudSaveFuel(op.payload);
+      else if (op.type === 'fuelDel') res = await cloudDeleteFuel(op.payload.date, op.payload.amount, op.payload.litres);
+      else res = { ok: true }; // unknown — drop
+    } catch(e) { res = { ok: false, error: e }; }
+
+    if (res && res.ok) {
+      succeededIds.add(op.id);
+    } else {
+      const newTries = (op.tries || 0) + 1;
+      if (newTries < 5) failed.set(op.id, { ...op, tries: newTries });
+      else { succeededIds.add(op.id); console.warn('[Cloud] Dropping op after 5 failed tries:', op); }
     }
   }
-  SYNC_QUEUE = stillFailed;
+
+  // Update queue by id (preserves any items enqueued during the flush)
+  SYNC_QUEUE = SYNC_QUEUE
+    .filter(q => !succeededIds.has(q.id))
+    .map(q => failed.has(q.id) ? failed.get(q.id) : q);
   persistSyncQueue();
   if (SYNC_QUEUE.length) {
     SYNC_STATE = 'error';
@@ -1493,33 +1563,29 @@ function updateSyncBadge() {
   }
 }
 
-// Wrap a cloud call: tries immediately, queues on failure for retry
-async function cloudWriteOrQueue(op) {
-  if (!CLOUD_READY || !CURRENT_USER) return;
-  // Deep-copy the payload immediately so subsequent local changes don't mutate what we send
-  op = { type: op.type, payload: JSON.parse(JSON.stringify(op.payload || {})), ts: Date.now() };
-  if (!navigator.onLine) {
-    queueSync(op);
-    return;
-  }
-  let res;
-  if (op.type === 'trip')          res = await cloudSaveTripEntry(op.payload.date, op.payload.rider, op.payload.d);
-  else if (op.type === 'rider')    res = await cloudUpsertRider(op.payload);
-  else if (op.type === 'riderDel') res = await cloudDeleteRider(op.payload.name);
-  else if (op.type === 'settings') res = await cloudSaveSettings();
-  else if (op.type === 'fuelAdd')  res = await cloudSaveFuel(op.payload);
-  else if (op.type === 'fuelDel')  res = await cloudDeleteFuel(op.payload.date, op.payload.amount, op.payload.litres);
-  if (!res || !res.ok) {
-    queueSync(op);
-  } else {
-    // Success — also flush any pending queue (network came back)
-    if (SYNC_QUEUE.length) scheduleSyncFlush(100);
-  }
-}
-
 // Online/offline event listeners
 window.addEventListener('online',  () => { SYNC_STATE = 'idle'; updateSyncBadge(); scheduleSyncFlush(500); });
 window.addEventListener('offline', () => { SYNC_STATE = 'offline'; updateSyncBadge(); });
+
+// Warn user before closing page if there are unsaved cloud writes
+window.addEventListener('beforeunload', (e) => {
+  if (CLOUD_READY && CURRENT_USER && SYNC_QUEUE.length > 0) {
+    e.preventDefault();
+    e.returnValue = 'You have ' + SYNC_QUEUE.length + ' unsaved changes. Leave anyway?';
+    return e.returnValue;
+  }
+});
+
+// When tab becomes hidden (user switching apps, closing tab), try one last flush
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && CLOUD_READY && CURRENT_USER && SYNC_QUEUE.length > 0) {
+    // Best-effort flush — may not complete if page is being unloaded
+    scheduleSyncFlush(0);
+  } else if (!document.hidden && CLOUD_READY && CURRENT_USER && SYNC_QUEUE.length > 0) {
+    // Coming back to the app — retry any pending writes
+    scheduleSyncFlush(200);
+  }
+});
 
 // ── MIGRATE LOCAL DATA TO CLOUD ───────────────────────────────
 async function migrateLocalToCloud() {
@@ -1606,7 +1672,7 @@ function saveFareSetting() {
     if (document.getElementById('screen-summary').classList.contains('active')) renderSummary();
     if (document.getElementById('screen-history').classList.contains('active')) renderHistory();
     showToast('💰 Fare updated to ₹' + newFare);
-    if (CLOUD_READY && CURRENT_USER) cloudWriteOrQueue({ type: 'settings' });
+    if (CLOUD_READY && CURRENT_USER) enqueueAndPush({ type: 'settings' });
   };
 
   if (unlockedCount > 0) {
@@ -1758,7 +1824,7 @@ function saveRiders()  {
   localStorage.setItem('rsPWA_riders',  JSON.stringify(RIDERS));
   // Push to cloud (queued with retry)
   if (CLOUD_READY && CURRENT_USER) {
-    RIDERS.forEach(r => cloudWriteOrQueue({ type: 'rider', payload: r }));
+    RIDERS.forEach(r => enqueueAndPush({ type: 'rider', payload: r }));
   }
 }
 function saveFilter()  { localStorage.setItem('rsPWA_filter',  JSON.stringify(activeFilter)); }
@@ -2325,18 +2391,17 @@ function tog(rider,field,val) {
   if(field==='mP'&&day[rider][field]!=='P') day[rider].mPaid='';
   if(field==='eP'&&day[rider][field]!=='P') day[rider].ePaid='';
   // Lock in the fare at the time this trip is logged.
-  // Once recorded, fare changes will NOT affect this entry retroactively.
   if ((day[rider].mP === 'P' || day[rider].eP === 'P') && !day[rider].fareAtTime) {
     day[rider].fareAtTime = riderFare(rider);
   }
-  // If both slots are cleared, also clear the fareAtTime so it re-locks fresh next time
   if (day[rider].mP !== 'P' && day[rider].eP !== 'P') {
     delete day[rider].fareAtTime;
   }
   save(); renderRiders(); updateStats();
-  // Push to cloud (queued if offline / retries on failure)
+  // Push to cloud — ALWAYS queue first so it survives browser close,
+  // then attempt immediate push (queue entry is removed on success in flush).
   if (CLOUD_READY && CURRENT_USER) {
-    cloudWriteOrQueue({ type: 'trip', payload: { date, rider, d: day[rider] } });
+    enqueueAndPush({ type: 'trip', payload: { date, rider, d: day[rider] } });
   }
 }
 function onDateChange(){renderRiders();}
@@ -2948,14 +3013,14 @@ function saveFuelEntry() {
   if (editingFuelIdx === null) {
     fuelEntries.push(entry);
     showToast('⛽ Fill-up added!');
-    if (CLOUD_READY && CURRENT_USER) cloudWriteOrQueue({ type: 'fuelAdd', payload: entry });
+    if (CLOUD_READY && CURRENT_USER) enqueueAndPush({ type: 'fuelAdd', payload: entry });
   } else {
     const oldEntry = fuelEntries[editingFuelIdx];
     fuelEntries[editingFuelIdx] = entry;
     showToast('⛽ Fill-up updated!');
     if (CLOUD_READY && CURRENT_USER) {
-      cloudWriteOrQueue({ type: 'fuelDel', payload: oldEntry });
-      cloudWriteOrQueue({ type: 'fuelAdd', payload: entry });
+      enqueueAndPush({ type: 'fuelDel', payload: oldEntry });
+      enqueueAndPush({ type: 'fuelAdd', payload: entry });
     }
   }
   // Sort by date descending
@@ -2973,7 +3038,7 @@ function deleteFuelEntry() {
     fuelEntries.splice(editingFuelIdx, 1);
     saveFuel(); closeFuelModal(); renderFuel();
     if (document.getElementById('screen-summary').classList.contains('active')) renderSummary();
-    if (CLOUD_READY && CURRENT_USER && oldEntry) cloudWriteOrQueue({ type: 'fuelDel', payload: oldEntry });
+    if (CLOUD_READY && CURRENT_USER && oldEntry) enqueueAndPush({ type: 'fuelDel', payload: oldEntry });
     showToast('🗑️ Fill-up deleted');
   });
 }
