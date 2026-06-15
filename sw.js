@@ -1,5 +1,5 @@
 // Bump CACHE version on every release to force update
-const CACHE = 'raax-v21-persistent-queue';
+const CACHE = 'raax-v23-race-free';
 
 const STATIC_ASSETS = [
   './manifest.json',
