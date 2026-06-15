@@ -682,7 +682,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         </div>
       </div>
 
-      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.1.8 — 💾 Persistent Sync Queue</div>
+      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.2.0 — 🛡️ Race-Free Sync</div>
     </div>
 
   </div>
@@ -1393,6 +1393,20 @@ function persistSyncQueue() {
   updateSyncBadge();
 }
 
+// Per-key push locks — prevents out-of-order writes for the same (date,rider).
+// When multiple taps happen quickly, we serialize their pushes so the LAST tap wins.
+const _pushLocks = new Map(); // key -> Promise chain
+
+function getOpKey(op) {
+  if (op.type === 'trip')     return 'trip:' + op.payload.date + ':' + op.payload.rider;
+  if (op.type === 'rider')    return 'rider:' + op.payload.name;
+  if (op.type === 'riderDel') return 'rider:' + op.payload.name;
+  if (op.type === 'settings') return 'settings';
+  if (op.type === 'fuelAdd' || op.type === 'fuelDel')
+    return 'fuel:' + op.payload.date + ':' + op.payload.amount + ':' + op.payload.litres;
+  return 'op:' + (op.id || Math.random());
+}
+
 function queueSync(op) {
   // Deep-clone payload to prevent mutation from concurrent edits
   op = {
@@ -1402,15 +1416,16 @@ function queueSync(op) {
     ts: op.ts || Date.now(),
     tries: op.tries || 0
   };
-  // De-dup: for trip writes on same (date,rider), replace existing queued op
+  // De-dup: for trip writes on same (date,rider), REMOVE any older queued op for that key
+  // (the new op's id stays unique so its enqueueAndPush can still find it).
+  // This way, the push chain still has an op waiting at every step.
   if (op.type === 'trip') {
-    const idx = SYNC_QUEUE.findIndex(q =>
-      q.type === 'trip' &&
-      q.payload.date === op.payload.date &&
-      q.payload.rider === op.payload.rider
+    SYNC_QUEUE = SYNC_QUEUE.filter(q =>
+      !(q.type === 'trip' &&
+        q.payload.date === op.payload.date &&
+        q.payload.rider === op.payload.rider)
     );
-    if (idx >= 0) SYNC_QUEUE[idx] = op;
-    else SYNC_QUEUE.push(op);
+    SYNC_QUEUE.push(op);
   } else {
     SYNC_QUEUE.push(op);
   }
@@ -1420,11 +1435,10 @@ function queueSync(op) {
 }
 
 // Enqueue (persisted immediately to localStorage) then attempt immediate push.
-// If push succeeds, op is removed from queue. If it fails or browser closes,
-// the queued op survives for retry on next load.
+// Uses a per-key serialization lock so concurrent edits to the same row push in order.
 async function enqueueAndPush(op) {
   if (!CLOUD_READY || !CURRENT_USER) return;
-  const opId = queueSync(op);  // SYNCHRONOUSLY persists to localStorage
+  const opId = queueSync(op);
   updateSyncBadge();
 
   if (!navigator.onLine) {
@@ -1433,31 +1447,44 @@ async function enqueueAndPush(op) {
     return;
   }
 
-  // Attempt immediate push
-  const queuedOp = SYNC_QUEUE.find(q => q.id === opId);
-  if (!queuedOp) return; // already flushed by another path
-  let res;
-  try {
-    if (queuedOp.type === 'trip')          res = await cloudSaveTripEntry(queuedOp.payload.date, queuedOp.payload.rider, queuedOp.payload.d);
-    else if (queuedOp.type === 'rider')    res = await cloudUpsertRider(queuedOp.payload);
-    else if (queuedOp.type === 'riderDel') res = await cloudDeleteRider(queuedOp.payload.name);
-    else if (queuedOp.type === 'settings') res = await cloudSaveSettings();
-    else if (queuedOp.type === 'fuelAdd')  res = await cloudSaveFuel(queuedOp.payload);
-    else if (queuedOp.type === 'fuelDel')  res = await cloudDeleteFuel(queuedOp.payload.date, queuedOp.payload.amount, queuedOp.payload.litres);
-  } catch(e) {
-    res = { ok: false, error: e };
-  }
-  if (res && res.ok) {
-    // Success — remove from queue
-    SYNC_QUEUE = SYNC_QUEUE.filter(q => q.id !== opId);
-    persistSyncQueue();
-    if (SYNC_QUEUE.length === 0) { SYNC_STATE = 'idle'; updateSyncBadge(); }
-  } else {
-    // Stay in queue for retry
-    SYNC_STATE = 'error';
-    updateSyncBadge();
-    scheduleSyncFlush(5000);
-  }
+  const key = getOpKey(op);
+  // Chain this push onto any in-flight push for the same key
+  const prevPush = _pushLocks.get(key) || Promise.resolve();
+  const thisPush = prevPush.then(async () => {
+    // Look up the LATEST queued state for this key (may have been replaced by a newer tap)
+    const queuedOp = SYNC_QUEUE.find(q => q.id === opId)
+                  || SYNC_QUEUE.find(q => getOpKey(q) === key);
+    if (!queuedOp) return; // already removed by another path
+
+    let res;
+    try {
+      if (queuedOp.type === 'trip')          res = await cloudSaveTripEntry(queuedOp.payload.date, queuedOp.payload.rider, queuedOp.payload.d);
+      else if (queuedOp.type === 'rider')    res = await cloudUpsertRider(queuedOp.payload);
+      else if (queuedOp.type === 'riderDel') res = await cloudDeleteRider(queuedOp.payload.name);
+      else if (queuedOp.type === 'settings') res = await cloudSaveSettings();
+      else if (queuedOp.type === 'fuelAdd')  res = await cloudSaveFuel(queuedOp.payload);
+      else if (queuedOp.type === 'fuelDel')  res = await cloudDeleteFuel(queuedOp.payload.date, queuedOp.payload.amount, queuedOp.payload.litres);
+    } catch(e) {
+      res = { ok: false, error: e };
+    }
+    if (res && res.ok) {
+      // Only remove if it's still the same op id (newer edits have own id since dedup keeps old id)
+      SYNC_QUEUE = SYNC_QUEUE.filter(q => q.id !== queuedOp.id);
+      persistSyncQueue();
+      if (SYNC_QUEUE.length === 0) { SYNC_STATE = 'idle'; updateSyncBadge(); }
+    } else {
+      SYNC_STATE = 'error';
+      updateSyncBadge();
+      scheduleSyncFlush(5000);
+    }
+  }).catch(e => {
+    console.error('[Cloud] Push chain error:', e);
+  }).finally(() => {
+    // Clean up lock if this was the last push
+    if (_pushLocks.get(key) === thisPush) _pushLocks.delete(key);
+  });
+  _pushLocks.set(key, thisPush);
+  return thisPush;
 }
 
 function scheduleSyncFlush(ms) {
@@ -2415,21 +2442,21 @@ async function saveEntry(){
     return;
   }
 
-  // Try immediate push — wait for it so we can give honest feedback
   showToast('💾 Saving — ' + formatDate(date));
-  let failures = 0;
+  // Enqueue every rider's entry for this date — uses per-key locking so each chains properly
+  const pushPromises = [];
   for (const [riderName, d] of Object.entries(day)) {
-    const res = await cloudSaveTripEntry(date, riderName, d);
-    if (!res || !res.ok) {
-      failures++;
-      // Queue for retry
-      queueSync({ type: 'trip', payload: { date, rider: riderName, d: JSON.parse(JSON.stringify(d)) } });
-    }
+    pushPromises.push(enqueueAndPush({ type: 'trip', payload: { date, rider: riderName, d } }));
   }
-  if (failures === 0) {
+  // Wait for all per-key push chains to settle
+  await Promise.all(pushPromises);
+
+  // Count failures (anything still in queue for this date)
+  const failed = SYNC_QUEUE.filter(q => q.type === 'trip' && q.payload.date === date).length;
+  if (failed === 0) {
     showToast('✅ Saved to cloud — ' + formatDate(date));
   } else {
-    showToast('⚠️ ' + failures + ' didn\'t sync — will retry');
+    showToast('⚠️ ' + failed + ' didn\'t sync — will retry');
   }
 }
 
