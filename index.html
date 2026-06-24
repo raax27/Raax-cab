@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -680,9 +681,14 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
           <div class="srt"><div class="srn">Check for Updates</div><div class="srd">Force refresh to latest version</div></div>
           <span class="srr">›</span>
         </div>
+        <div class="srow" onclick="showSyncLog()" style="border-top:1px solid var(--border)">
+          <span class="sri">📋</span>
+          <div class="srt"><div class="srn">Sync Event Log</div><div class="srd">View cloud write history for debugging</div></div>
+          <span class="srr">›</span>
+        </div>
       </div>
 
-      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.2.0 — 🛡️ Race-Free Sync</div>
+      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.2.1 — 🛡️ Race-Free Sync</div>
     </div>
 
   </div>
@@ -1289,11 +1295,27 @@ async function loadCloudData() {
     if (fe) { console.warn('Fuel load error:', fe); throw fe; }
     const loadedFuel = (fs || []).map(f => ({ date: f.fuel_date, litres: parseFloat(f.litres), amount: f.amount, note: f.note || '' }));
 
-    // ── ALL queries succeeded — overwrite local state with cloud data ──
-    // (Even if cloud is empty, we trust it — it's the source of truth)
+    // ── ALL queries succeeded — merge cloud data with any still-pending local writes ──
     RIDERS      = loadedRiders;
     entries     = loadedEntries;
     fuelEntries = loadedFuel;
+
+    // If there are still pending queue items (flush above failed partially),
+    // apply them on top of cloud data so UI shows correct local state
+    if (SYNC_QUEUE.length > 0) {
+      SYNC_QUEUE.forEach(op => {
+        if (op.type === 'trip' && op.payload && op.payload.date && op.payload.rider) {
+          if (!entries[op.payload.date]) entries[op.payload.date] = {};
+          // Only apply if the queued data has actual content
+          const d = op.payload.d || {};
+          if (d.mP || d.eP || d.mPaid || d.ePaid) {
+            entries[op.payload.date][op.payload.rider] = d;
+          }
+        }
+      });
+      console.log('[Cloud] Applied ' + SYNC_QUEUE.length + ' pending queue items on top of cloud data');
+    }
+
     if (s) {
       adminName = s.admin_name || 'Admin';
       FARE      = s.default_fare || 75;
@@ -1308,6 +1330,7 @@ async function loadCloudData() {
     localStorage.setItem('rsPWA_fare',    String(FARE));
 
     console.log(`[Cloud] Loaded ${RIDERS.length} riders, ${Object.keys(entries).length} dates, ${fuelEntries.length} fuel entries for user ${CURRENT_USER.email}`);
+    syncLog('INFO', 'LOAD OK', { riders: RIDERS.length, dates: Object.keys(entries).length, fuel: fuelEntries.length, pendingMerged: SYNC_QUEUE.length });
     return true;
 
   } catch (e) {
@@ -1352,16 +1375,27 @@ async function cloudDeleteRider(name) {
 
 async function cloudSaveTripEntry(date, riderName, d) {
   if (!CURRENT_USER || !sb) return { ok: false, error: 'Not logged in' };
+  const payload = {
+    user_id: CURRENT_USER.id, trip_date: date, rider_name: riderName,
+    m_present: d.mP||'', m_paid: d.mPaid||'', e_present: d.eP||'', e_paid: d.ePaid||'',
+    fare_at_time: d.fareAtTime || null,
+    updated_at: new Date().toISOString()
+  };
+  syncLog('INFO', `PUSH ${date}/${riderName}`, { mP: payload.m_present, mPaid: payload.m_paid, eP: payload.e_present, ePaid: payload.e_paid });
   try {
-    const { error } = await sb.from('trip_entries').upsert({
-      user_id: CURRENT_USER.id, trip_date: date, rider_name: riderName,
-      m_present: d.mP||'', m_paid: d.mPaid||'', e_present: d.eP||'', e_paid: d.ePaid||'',
-      fare_at_time: d.fareAtTime || null,
-      updated_at: new Date().toISOString()
-    }, { onConflict: 'user_id,rider_name,trip_date' });
-    if (error) { console.error('[Cloud] Save trip failed:', error, { date, riderName, d }); return { ok: false, error }; }
+    const { error } = await sb.from('trip_entries').upsert(payload, { onConflict: 'user_id,rider_name,trip_date' });
+    if (error) {
+      syncLog('ERROR', `PUSH FAILED ${date}/${riderName}`, error);
+      console.error('[Cloud] Save trip failed:', error, { date, riderName, d });
+      return { ok: false, error };
+    }
+    syncLog('INFO', `PUSH OK ${date}/${riderName}`);
     return { ok: true };
-  } catch(e) { console.error('[Cloud] Save trip threw:', e); return { ok: false, error: e }; }
+  } catch(e) {
+    syncLog('ERROR', `PUSH THREW ${date}/${riderName}`, e.message);
+    console.error('[Cloud] Save trip threw:', e);
+    return { ok: false, error: e };
+  }
 }
 
 async function cloudSaveFuel(f) {
@@ -1391,6 +1425,28 @@ async function cloudDeleteFuel(date, amount, litres) {
 function persistSyncQueue() {
   localStorage.setItem('rsPWA_syncQueue', JSON.stringify(SYNC_QUEUE));
   updateSyncBadge();
+}
+
+// ── PERSISTENT DEBUG LOG ───────────────────────────────────────
+// Keeps last 50 sync events in localStorage so we can diagnose data loss
+function syncLog(level, msg, detail) {
+  try {
+    const key = 'rsPWA_syncLog';
+    const logs = JSON.parse(localStorage.getItem(key) || '[]');
+    logs.push({ ts: new Date().toISOString(), level, msg, detail: detail || null });
+    if (logs.length > 50) logs.splice(0, logs.length - 50);
+    localStorage.setItem(key, JSON.stringify(logs));
+    if (level === 'ERROR') console.error('[SyncLog]', msg, detail || '');
+    else console.log('[SyncLog]', msg, detail || '');
+  } catch(_) {}
+}
+
+function showSyncLog() {
+  const logs = JSON.parse(localStorage.getItem('rsPWA_syncLog') || '[]');
+  if (!logs.length) { showToast('No sync log entries'); return; }
+  const txt = logs.map(l => `${l.ts.slice(11,19)} [${l.level}] ${l.msg}${l.detail ? ' — '+JSON.stringify(l.detail) : ''}`).join('\n');
+  const w = window.open('', '_blank', 'width=700,height=500');
+  w.document.write('<pre style="font-size:12px;padding:12px;">' + txt + '</pre>');
 }
 
 // Per-key push locks — prevents out-of-order writes for the same (date,rider).
@@ -2443,15 +2499,25 @@ async function saveEntry(){
   }
 
   showToast('💾 Saving — ' + formatDate(date));
-  // Enqueue every rider's entry for this date — uses per-key locking so each chains properly
   const pushPromises = [];
+  const toPush = [];
   for (const [riderName, d] of Object.entries(day)) {
+    // CRITICAL: only push riders that have actual data.
+    // Pushing empty {mP:'',mPaid:'',eP:'',ePaid:''} would WIPE existing cloud
+    // data for riders who had entries on this date from a previous session.
+    const hasData = d.mP === 'P' || d.mP === 'A' || d.eP === 'P' || d.eP === 'A';
+    if (!hasData) continue;
+    toPush.push(riderName);
     pushPromises.push(enqueueAndPush({ type: 'trip', payload: { date, rider: riderName, d } }));
   }
-  // Wait for all per-key push chains to settle
-  await Promise.all(pushPromises);
+  syncLog('INFO', `SAVE ${date}`, { riders: toPush });
 
-  // Count failures (anything still in queue for this date)
+  if (pushPromises.length === 0) {
+    showToast('✅ Saved — ' + formatDate(date));
+    return;
+  }
+
+  await Promise.all(pushPromises);
   const failed = SYNC_QUEUE.filter(q => q.type === 'trip' && q.payload.date === date).length;
   if (failed === 0) {
     showToast('✅ Saved to cloud — ' + formatDate(date));
