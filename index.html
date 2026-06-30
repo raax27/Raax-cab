@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -688,7 +687,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         </div>
       </div>
 
-      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.2.1 — 🛡️ Race-Free Sync</div>
+      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.2.2 — 🔑 Token Refresh Fix</div>
     </div>
 
   </div>
@@ -1254,6 +1253,27 @@ async function loadCloudData() {
     await flushSyncQueueAndWait();
   }
 
+  // CRITICAL FIX: Force a fresh session/token BEFORE reading.
+  // getSession() can return a session whose access token has technically expired —
+  // if a query fires with a stale JWT, Postgres RLS silently returns 0 rows
+  // (no error thrown) because auth.uid() doesn't resolve correctly.
+  // refreshSession() guarantees we have a valid, current token for the reads below.
+  try {
+    const { data: refreshed, error: refreshErr } = await sb.auth.refreshSession();
+    if (refreshErr) {
+      syncLog('ERROR', 'Session refresh failed before load', refreshErr.message);
+    } else if (refreshed && refreshed.session) {
+      CURRENT_USER = refreshed.session.user; // keep CURRENT_USER in sync with fresh token
+      syncLog('INFO', 'Session refreshed before load', { expiresAt: refreshed.session.expires_at });
+    }
+  } catch(e) {
+    syncLog('ERROR', 'Session refresh threw', e.message);
+  }
+
+  // Remember what was in localStorage BEFORE this load, to sanity-check the cloud response
+  const prevLocalEntries = JSON.parse(localStorage.getItem('rsPWA_entries') || '{}');
+  const prevLocalDateCount = Object.keys(prevLocalEntries).length;
+
   try {
     // ── Settings ──
     const { data: s, error: se } = await sb.from('settings').select('*').eq('user_id', CURRENT_USER.id).single();
@@ -1268,24 +1288,60 @@ async function loadCloudData() {
     }));
 
     // ── Trip entries (paginated to handle >1000 rows) ──
-    const loadedEntries = {};
-    let from = 0, batch = 1000;
-    while (true) {
-      const { data: ts, error: te } = await sb.from('trip_entries')
-        .select('*').eq('user_id', CURRENT_USER.id)
-        .range(from, from + batch - 1);
-      if (te) { console.warn('Trip entries load error:', te); throw te; }
-      if (!ts || !ts.length) break;
-      ts.forEach(t => {
-        if (!loadedEntries[t.trip_date]) loadedEntries[t.trip_date] = {};
-        loadedEntries[t.trip_date][t.rider_name] = {
-          mP: t.m_present || '', mPaid: t.m_paid || '',
-          eP: t.e_present || '', ePaid: t.e_paid || '',
-          fareAtTime: t.fare_at_time || undefined
-        };
-      });
-      if (ts.length < batch) break;
-      from += batch;
+    let loadedEntries = {};
+    let totalTripRows = 0;
+    async function fetchAllTripEntries() {
+      const out = {};
+      let count = 0;
+      let from = 0, batch = 1000;
+      while (true) {
+        const { data: ts, error: te } = await sb.from('trip_entries')
+          .select('*').eq('user_id', CURRENT_USER.id)
+          .range(from, from + batch - 1);
+        if (te) { console.warn('Trip entries load error:', te); throw te; }
+        if (!ts || !ts.length) break;
+        count += ts.length;
+        ts.forEach(t => {
+          if (!out[t.trip_date]) out[t.trip_date] = {};
+          out[t.trip_date][t.rider_name] = {
+            mP: t.m_present || '', mPaid: t.m_paid || '',
+            eP: t.e_present || '', ePaid: t.e_paid || '',
+            fareAtTime: t.fare_at_time || undefined
+          };
+        });
+        if (ts.length < batch) break;
+        from += batch;
+      }
+      return { entries: out, count };
+    }
+
+    let firstAttempt = await fetchAllTripEntries();
+    loadedEntries = firstAttempt.entries;
+    totalTripRows = firstAttempt.count;
+
+    // SAFETY NET: if the cloud returned ZERO trip rows but local cache clearly
+    // had data before this load (or riders exist, implying an active account),
+    // this is suspicious — could be a stale-JWT/RLS timing glitch. Retry once
+    // after a short delay rather than blindly wiping local history.
+    if (totalTripRows === 0 && (prevLocalDateCount > 0 || loadedRiders.length > 0)) {
+      syncLog('WARN', 'Suspicious empty trip_entries — retrying', { prevLocalDateCount, riders: loadedRiders.length });
+      await new Promise(r => setTimeout(r, 800));
+      try {
+        const retryAttempt = await fetchAllTripEntries();
+        if (retryAttempt.count > 0) {
+          loadedEntries = retryAttempt.entries;
+          totalTripRows = retryAttempt.count;
+          syncLog('INFO', 'Retry recovered trip entries', { count: totalTripRows });
+        } else {
+          syncLog('WARN', 'Retry still returned 0 — keeping local data instead of wiping', { prevLocalDateCount });
+          // Don't trust this read — fall back to whatever was in localStorage,
+          // so we never silently erase visible trip history.
+          loadedEntries = prevLocalEntries;
+        }
+      } catch(e) {
+        syncLog('ERROR', 'Retry threw — keeping local data', e.message);
+        loadedEntries = prevLocalEntries;
+      }
     }
 
     // ── Fuel entries ──
@@ -1330,7 +1386,7 @@ async function loadCloudData() {
     localStorage.setItem('rsPWA_fare',    String(FARE));
 
     console.log(`[Cloud] Loaded ${RIDERS.length} riders, ${Object.keys(entries).length} dates, ${fuelEntries.length} fuel entries for user ${CURRENT_USER.email}`);
-    syncLog('INFO', 'LOAD OK', { riders: RIDERS.length, dates: Object.keys(entries).length, fuel: fuelEntries.length, pendingMerged: SYNC_QUEUE.length });
+    syncLog('INFO', 'LOAD OK', { riders: RIDERS.length, dates: Object.keys(entries).length, fuel: fuelEntries.length, pendingMerged: SYNC_QUEUE.length, rawTripRows: totalTripRows });
     return true;
 
   } catch (e) {
