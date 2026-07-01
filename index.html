@@ -687,7 +687,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         </div>
       </div>
 
-      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.2.2 — 🔑 Token Refresh Fix</div>
+      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.2.3 — 🔒 Logic Hardened</div>
     </div>
 
   </div>
@@ -893,6 +893,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 // Get them from: Supabase Dashboard → Settings → API
 const SUPABASE_URL  = 'https://kqyaczklqvfiglendrim.supabase.co';
 const SUPABASE_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtxeWFjemtscXZmaWdsZW5kcmltIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAyMjc1MjAsImV4cCI6MjA5NTgwMzUyMH0.zR_rtd8S8HIXIFiMWnfW3-gF1BlmllZEot9pELaSSsg';
+
 
 let sb = null;             // Supabase client
 let CURRENT_USER = null;   // Logged-in user object
@@ -1400,9 +1401,16 @@ async function loadCloudData() {
 async function cloudSaveSettings() {
   if (!CURRENT_USER || !sb) return { ok: false, error: 'Not logged in' };
   try {
+    // BUG-3 FIX: include ALL settings fields in one upsert so no field is lost
+    // on cross-device sync (previously username and mpin_hash were missing).
     const { error } = await sb.from('settings').upsert({
-      user_id: CURRENT_USER.id, admin_name: adminName, default_fare: FARE, updated_at: new Date().toISOString()
-    });
+      user_id: CURRENT_USER.id,
+      admin_name: adminName,
+      default_fare: FARE,
+      username: USERNAME || null,
+      mpin_hash: MPIN_HASH || null,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'user_id' });
     if (error) { console.error('[Cloud] Save settings failed:', error); return { ok: false, error }; }
     return { ok: true };
   } catch(e) { console.error('[Cloud] Save settings threw:', e); return { ok: false, error: e }; }
@@ -2456,6 +2464,13 @@ function renderRiders() {
   shown.forEach(rider => {
     const d = day[rider.name];
     const s = calcR(rider.name);
+    // BUG-10 FIX: count all Present slots across ALL time for the "rides logged" counter
+    const totalRides = Object.values(entries).reduce((acc, dayData) => {
+      const rd = dayData[rider.name] || {};
+      if (rd.mP === 'P') acc++;
+      if (rd.eP === 'P') acc++;
+      return acc;
+    }, 0);
     const hasAny  = d.mP || d.eP;
     const mVis    = d.mP === 'P' ? 'vis' : '';
     const eVis    = d.eP === 'P' ? 'vis' : '';
@@ -2470,7 +2485,7 @@ function renderRiders() {
         ${avHTML(rider)}
         <div class="rinfo">
           <div class="rname">${rn}</div>
-          <div class="rsub">${s.pR+s.uR} rides logged</div>
+          <div class="rsub">${totalRides} rides logged</div>
         </div>
         <div class="ramts">
           <div class="apaid">₹${s.paid}</div>
@@ -2527,8 +2542,13 @@ function tog(rider,field,val) {
   const date=document.getElementById('logDate').value;
   const day=getDay(date);
   day[rider][field]=day[rider][field]===val?'':val;
+  // Clearing Present also clears Paid status
   if(field==='mP'&&day[rider][field]!=='P') day[rider].mPaid='';
   if(field==='eP'&&day[rider][field]!=='P') day[rider].ePaid='';
+  // BUG-1 FIX: When Present is tapped and no paid status set yet, default to 'N'.
+  // Without this, rides become ghost entries — counted in Trips but invisible in ₹ totals.
+  if(field==='mP'&&day[rider].mP==='P'&&!day[rider].mPaid) day[rider].mPaid='N';
+  if(field==='eP'&&day[rider].eP==='P'&&!day[rider].ePaid) day[rider].ePaid='N';
   // Lock in the fare at the time this trip is logged.
   if ((day[rider].mP === 'P' || day[rider].eP === 'P') && !day[rider].fareAtTime) {
     day[rider].fareAtTime = riderFare(rider);
@@ -2537,8 +2557,6 @@ function tog(rider,field,val) {
     delete day[rider].fareAtTime;
   }
   save(); renderRiders(); updateStats();
-  // Push to cloud — ALWAYS queue first so it survives browser close,
-  // then attempt immediate push (queue entry is removed on success in flush).
   if (CLOUD_READY && CURRENT_USER) {
     enqueueAndPush({ type: 'trip', payload: { date, rider, d: day[rider] } });
   }
@@ -2714,7 +2732,15 @@ function renderSummary(){
   const dt = currentSummaryDate();
   const useDate = !!dt;
   let g=0,gp=0,gt=0;
-  RIDERS.forEach(r=>{ const s=calcR(r.name, mo, dt); g+=s.paid; gp+=s.pending; gt+=s.pR+s.uR; });
+  RIDERS.forEach(r=>{ const s=calcR(r.name, mo, dt); g+=s.paid; gp+=s.pending;
+    // Count all Present slots for trips total
+    Object.entries(entries).forEach(([date, day]) => {
+      if (dt ? date !== dt : (mo && !date.startsWith(mo))) return;
+      const d = day[r.name] || {};
+      if (d.mP === 'P') gt++;
+      if (d.eP === 'P') gt++;
+    });
+  });
 
   // Fuel total for the period
   let fuelTotal = 0, fuelLitres = 0, fuelCount = 0;
@@ -2732,6 +2758,15 @@ function renderSummary(){
 
   const cards = RIDERS.map(r=>{
     const s=calcR(r.name, mo, dt); const img=photos[r.name];
+    // BUG-10 FIX: count ALL Present slots for "rides logged" — not just those
+    // with explicit Paid/Not-Paid status, which previously excluded blank-status rides
+    let allRides = 0;
+    Object.entries(entries).forEach(([date, day]) => {
+      if (dt ? date !== dt : (mo && !date.startsWith(mo))) return;
+      const d = day[r.name] || {};
+      if (d.mP === 'P') allRides++;
+      if (d.eP === 'P') allRides++;
+    });
     // Compute the ACTUAL effective fare from entries (so label matches the math)
     let effectiveFare = null;
     Object.entries(entries).forEach(([date, day]) => {
@@ -2791,18 +2826,16 @@ function renderSummary(){
 function openRiderPending(name, mo, dt) {
   const s = calcR(name, mo || currentSummaryMonth(), dt || '');
   if (!s.pendingDates.length) { showToast('✅ ' + name + ' has no pending dues!'); return; }
-  const rider = RIDERS.find(r=>r.name===name);
-  const fare = riderFare(name);
   document.getElementById('riderPendingTitle').textContent = '⏳ ' + name + ' — Pending';
   document.getElementById('riderPendingBody').innerHTML =
-    `<div style="font-size:12px;color:var(--muted);font-weight:700;margin-bottom:12px;text-align:center;">₹${s.pending} total pending (${s.uR} rides × ₹${fare})</div>` +
+    `<div style="font-size:12px;color:var(--muted);font-weight:700;margin-bottom:12px;text-align:center;">₹${s.pending} total due across ${s.uR} ride${s.uR!==1?'s':''}</div>` +
     s.pendingDates.map(p=>`
       <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border);">
         <div>
           <div style="font-size:13px;font-weight:800;">${formatDate(p.date)}</div>
           <div style="font-size:11px;color:var(--muted);">${p.slot} ride</div>
         </div>
-        <div style="font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;color:var(--red);">₹${fare}</div>
+        <div style="font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;color:var(--red);">₹${p.fare}</div>
       </div>`
     ).join('') +
     `<div style="display:flex;justify-content:space-between;padding:12px 0;font-weight:900;font-size:14px;">
@@ -2908,6 +2941,15 @@ function saveRider(){
       });
       if (photos[oldName]) { photos[name] = photos[oldName]; delete photos[oldName]; }
       save(); saveP();
+      // BUG-9 FIX: rekey any queued trip ops from old to new rider name
+      // so they don't resurrect a ghost entry under the old name
+      SYNC_QUEUE = SYNC_QUEUE.map(op => {
+        if (op.type === 'trip' && op.payload && op.payload.rider === oldName) {
+          return { ...op, payload: { ...op.payload, rider: name } };
+        }
+        return op;
+      });
+      persistSyncQueue();
       // Sync rename to cloud — order matters: delete old rider FIRST (no FK so trips stay),
       // then update trip rider_name, then upsert new rider via saveRiders() below
       if (CLOUD_READY && CURRENT_USER) {
@@ -2984,6 +3026,13 @@ async function deleteRider(){
       const idx = RIDERS.findIndex(x => x.name === riderName);
       if (idx >= 0) RIDERS.splice(idx, 1);
       localStorage.setItem('rsPWA_riders', JSON.stringify(RIDERS));
+
+      // BUG-2 FIX: purge any queued sync ops for this rider so they
+      // can't resurrect deleted data on the next flush
+      SYNC_QUEUE = SYNC_QUEUE.filter(op =>
+        !(op.type === 'trip' && op.payload && op.payload.rider === riderName)
+      );
+      persistSyncQueue();
 
       // ── 3. LOCAL — remove their trip data from entries{} ──
       Object.keys(entries).forEach(date => {
@@ -3307,7 +3356,8 @@ function exportExcel() {
     RIDERS.forEach(r => {
       const d = day[r.name] || {};
       if (!d.mP && !d.eP) return;
-      const fare = riderFare(r.name);
+      // BUG-6 FIX: use entryFare (historical locked fare) not riderFare (current)
+      const fare = entryFare(d, r.name);
       const tot  = ((d.mP==='P'&&d.mPaid==='Y'?1:0)+(d.eP==='P'&&d.ePaid==='Y'?1:0))*fare;
       tripRows.push([date, r.name, fare,
         d.mP==='P'?'Present':d.mP==='A'?'Absent':'',
@@ -4026,11 +4076,14 @@ async function handleMpinComplete() {
       return;
     }
     const hash = await hashMpin(_mpinBuf);
-    if (CLOUD_READY && CURRENT_USER) {
-      await sb.from('settings').update({ mpin_hash: hash }).eq('user_id', CURRENT_USER.id);
-    }
+    // BUG-4 FIX: was using .update() which silently fails if settings row
+    // doesn't exist yet. cloudSaveSettings() uses upsert and includes all fields.
     MPIN_HASH = hash;
     localStorage.setItem('rsPWA_mpin_set', '1');
+    if (CLOUD_READY && CURRENT_USER) {
+      const res = await cloudSaveSettings();
+      if (!res.ok) console.error('[Cloud] MPIN save failed', res.error);
+    }
     flashMpinDots('success');
     haptic('success');
     setTimeout(() => { closeMpinModal(); showToast('✅ MPIN saved!'); }, 400);
