@@ -687,7 +687,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         </div>
       </div>
 
-      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.2.3 — 🔒 Logic Hardened</div>
+      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.2.5 — ✅ Final Stable</div>
     </div>
 
   </div>
@@ -891,9 +891,8 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 
 // ⚠️ PASTE YOUR SUPABASE CREDENTIALS HERE
 // Get them from: Supabase Dashboard → Settings → API
-const SUPABASE_URL  = 'https://kqyaczklqvfiglendrim.supabase.co';
-const SUPABASE_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtxeWFjemtscXZmaWdsZW5kcmltIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAyMjc1MjAsImV4cCI6MjA5NTgwMzUyMH0.zR_rtd8S8HIXIFiMWnfW3-gF1BlmllZEot9pELaSSsg';
-
+const SUPABASE_URL  = '<PASTE_YOUR_PROJECT_URL_HERE>';
+const SUPABASE_KEY  = '<PASTE_YOUR_ANON_KEY_HERE>';
 
 let sb = null;             // Supabase client
 let CURRENT_USER = null;   // Logged-in user object
@@ -1291,32 +1290,9 @@ async function loadCloudData() {
     // ── Trip entries (paginated to handle >1000 rows) ──
     let loadedEntries = {};
     let totalTripRows = 0;
-    async function fetchAllTripEntries() {
-      const out = {};
-      let count = 0;
-      let from = 0, batch = 1000;
-      while (true) {
-        const { data: ts, error: te } = await sb.from('trip_entries')
-          .select('*').eq('user_id', CURRENT_USER.id)
-          .range(from, from + batch - 1);
-        if (te) { console.warn('Trip entries load error:', te); throw te; }
-        if (!ts || !ts.length) break;
-        count += ts.length;
-        ts.forEach(t => {
-          if (!out[t.trip_date]) out[t.trip_date] = {};
-          out[t.trip_date][t.rider_name] = {
-            mP: t.m_present || '', mPaid: t.m_paid || '',
-            eP: t.e_present || '', ePaid: t.e_paid || '',
-            fareAtTime: t.fare_at_time || undefined
-          };
-        });
-        if (ts.length < batch) break;
-        from += batch;
-      }
-      return { entries: out, count };
-    }
-
-    let firstAttempt = await fetchAllTripEntries();
+    // Capture userId at this moment to avoid closure over mutable CURRENT_USER
+    const userId = CURRENT_USER.id;
+    const firstAttempt = await fetchTripEntriesForUser(userId);
     loadedEntries = firstAttempt.entries;
     totalTripRows = firstAttempt.count;
 
@@ -1328,7 +1304,7 @@ async function loadCloudData() {
       syncLog('WARN', 'Suspicious empty trip_entries — retrying', { prevLocalDateCount, riders: loadedRiders.length });
       await new Promise(r => setTimeout(r, 800));
       try {
-        const retryAttempt = await fetchAllTripEntries();
+        const retryAttempt = await fetchTripEntriesForUser(userId);
         if (retryAttempt.count > 0) {
           loadedEntries = retryAttempt.entries;
           totalTripRows = retryAttempt.count;
@@ -1435,6 +1411,32 @@ async function cloudDeleteRider(name) {
     if (error) { console.error('[Cloud] Delete rider failed:', error); return { ok: false, error }; }
     return { ok: true };
   } catch(e) { console.error('[Cloud] Delete rider threw:', e); return { ok: false, error: e }; }
+}
+
+// Paginated trip-entries fetch — takes explicit userId to avoid closure bugs
+async function fetchTripEntriesForUser(userId) {
+  const out = {};
+  let count = 0, from = 0;
+  const batch = 1000;
+  while (true) {
+    const { data: ts, error: te } = await sb.from('trip_entries')
+      .select('*').eq('user_id', userId)
+      .range(from, from + batch - 1);
+    if (te) { console.warn('[Cloud] Trip entries load error:', te); throw te; }
+    if (!ts || !ts.length) break;
+    count += ts.length;
+    ts.forEach(t => {
+      if (!out[t.trip_date]) out[t.trip_date] = {};
+      out[t.trip_date][t.rider_name] = {
+        mP: t.m_present || '', mPaid: t.m_paid || '',
+        eP: t.e_present || '', ePaid: t.e_paid || '',
+        fareAtTime: t.fare_at_time || undefined
+      };
+    });
+    if (ts.length < batch) break;
+    from += batch;
+  }
+  return { entries: out, count };
 }
 
 async function cloudSaveTripEntry(date, riderName, d) {
@@ -1615,11 +1617,14 @@ function scheduleSyncFlush(ms) {
   }, ms);
 }
 
-// Awaitable version — flushes immediately, callers can await
+// Awaitable version — flushes immediately, callers can await.
+// Has a 10s timeout so a dead network can't block the app forever.
 async function flushSyncQueueAndWait() {
-  // Cancel any pending timer; we'll handle it now
   if (SYNC_RETRY_TIMER) { clearTimeout(SYNC_RETRY_TIMER); SYNC_RETRY_TIMER = null; }
-  await flushSyncQueue();
+  await Promise.race([
+    flushSyncQueue(),
+    new Promise(resolve => setTimeout(resolve, 10000)) // 10s max wait
+  ]);
 }
 
 async function flushSyncQueue() {
@@ -2358,7 +2363,9 @@ function calcR(name, monthFilter, dateFilter) {
     if(d.mP==='P'&&d.mPaid==='N'){ uR++; pending += fare; pendingDates.push({date, slot:'Morning', fare}); }
     if(d.eP==='P'&&d.ePaid==='N'){ uR++; pending += fare; pendingDates.push({date, slot:'Evening', fare}); }
   });
-  return {pR,uR,paid,pending,pendingDates,fare: riderFare(name)};
+  // Note: we no longer return a single 'fare' field since riders may have mixed fares
+  // across different months. Callers should use entryFare() or riderFare() directly.
+  return {pR,uR,paid,pending,pendingDates};
 }
 
 function calcDay(day) {
@@ -2541,12 +2548,20 @@ function renderRiders() {
 function tog(rider,field,val) {
   const date=document.getElementById('logDate').value;
   const day=getDay(date);
-  day[rider][field]=day[rider][field]===val?'':val;
+
+  // For P/A (Present/Absent): toggle off if already selected
+  // For Y/N (Paid/NotPaid): ALWAYS SET, never toggle off — avoids the bug where
+  // tapping Not-Paid when mPaid was already auto-defaulted to N would clear it back to ''
+  if (field === 'mPaid' || field === 'ePaid') {
+    day[rider][field] = val; // always set, never clear
+  } else {
+    day[rider][field] = day[rider][field] === val ? '' : val;
+  }
+
   // Clearing Present also clears Paid status
   if(field==='mP'&&day[rider][field]!=='P') day[rider].mPaid='';
   if(field==='eP'&&day[rider][field]!=='P') day[rider].ePaid='';
-  // BUG-1 FIX: When Present is tapped and no paid status set yet, default to 'N'.
-  // Without this, rides become ghost entries — counted in Trips but invisible in ₹ totals.
+  // When Present is tapped and no paid status set yet, default to Not-Paid
   if(field==='mP'&&day[rider].mP==='P'&&!day[rider].mPaid) day[rider].mPaid='N';
   if(field==='eP'&&day[rider].eP==='P'&&!day[rider].ePaid) day[rider].ePaid='N';
   // Lock in the fare at the time this trip is logged.
@@ -2576,11 +2591,15 @@ async function saveEntry(){
   const pushPromises = [];
   const toPush = [];
   for (const [riderName, d] of Object.entries(day)) {
-    // CRITICAL: only push riders that have actual data.
-    // Pushing empty {mP:'',mPaid:'',eP:'',ePaid:''} would WIPE existing cloud
-    // data for riders who had entries on this date from a previous session.
-    const hasData = d.mP === 'P' || d.mP === 'A' || d.eP === 'P' || d.eP === 'A';
-    if (!hasData) continue;
+    // Push a rider's entry if it has any meaningful state set by the user.
+    // We include:
+    //   - Present (P) or Absent (A) in either slot → explicit user action
+    //   - Paid/NotPaid set → user interacted with payment
+    // We EXCLUDE riders whose entry object is the fresh-init default (all fields blank)
+    // since those were created by getDay() for uninitialised riders, not by the user.
+    // Pushing blank rows would wipe cloud data for riders that had prior entries on this date.
+    const hasUserData = d.mP || d.mPaid || d.eP || d.ePaid;
+    if (!hasUserData) continue;
     toPush.push(riderName);
     pushPromises.push(enqueueAndPush({ type: 'trip', payload: { date, rider: riderName, d } }));
   }
@@ -3130,6 +3149,9 @@ function clearAll(){
   showConfirm('🗑️ Delete ALL data?', 'This permanently deletes ALL trip logs and fuel entries from cloud + local. Riders stay.', async () => {
     entries={}; save();
     fuelEntries=[]; saveFuel();
+    // Purge any queued writes so they cannot re-insert the deleted data on next flush
+    SYNC_QUEUE = SYNC_QUEUE.filter(op => op.type !== 'trip' && op.type !== 'fuelAdd' && op.type !== 'fuelDel');
+    persistSyncQueue();
     if (CLOUD_READY && CURRENT_USER) {
       try {
         await sb.from('trip_entries').delete().eq('user_id', CURRENT_USER.id);
@@ -3207,13 +3229,16 @@ function saveFuelEntry() {
   if (!litres || litres <= 0)   { err.textContent = 'Enter litres.'; return; }
   if (!amount || amount <= 0)   { err.textContent = 'Enter amount paid.'; return; }
 
-  const entry = { date, litres, amount, note };
   if (editingFuelIdx === null) {
+    // BUG-E6 FIX: assign a unique id so delete/edit is unambiguous even if two
+    // entries share the same date+amount+litres values
+    const entry = { id: 'f_' + Date.now() + '_' + Math.random().toString(36).substr(2,4), date, litres, amount, note };
     fuelEntries.push(entry);
     showToast('⛽ Fill-up added!');
     if (CLOUD_READY && CURRENT_USER) enqueueAndPush({ type: 'fuelAdd', payload: entry });
   } else {
     const oldEntry = fuelEntries[editingFuelIdx];
+    const entry = { id: oldEntry.id || ('f_' + Date.now()), date, litres, amount, note };
     fuelEntries[editingFuelIdx] = entry;
     showToast('⛽ Fill-up updated!');
     if (CLOUD_READY && CURRENT_USER) {
@@ -3221,7 +3246,6 @@ function saveFuelEntry() {
       enqueueAndPush({ type: 'fuelAdd', payload: entry });
     }
   }
-  // Sort by date descending
   fuelEntries.sort((a,b) => b.date.localeCompare(a.date));
   saveFuel();
   closeFuelModal();
@@ -3716,7 +3740,6 @@ async function _doImport(bytes) {
     Object.entries(dayData).forEach(([riderName, d]) => {
       // Only set fareAtTime if at least one slot is Present
       if ((d.mP === 'P' || d.eP === 'P') && !d.fareAtTime) {
-        // Use rider's custom fare (from import or existing) or fall back to default
         const importedRider = importedRiders.find(r => r.name === riderName);
         const existingRider = RIDERS.find(r => r.name === riderName);
         const lockedFare =
@@ -3725,7 +3748,13 @@ async function _doImport(bytes) {
           FARE;
         d.fareAtTime = lockedFare;
       }
-      entries[date][riderName] = d;
+      // BUG-E7 FIX: only import this entry if no live data exists for this date+rider.
+      // Never overwrite existing data — import fills gaps, not replaces current state.
+      const existing = entries[date][riderName];
+      const hasLiveData = existing && (existing.mP || existing.eP || existing.mPaid || existing.ePaid);
+      if (!hasLiveData) {
+        entries[date][riderName] = d;
+      }
     });
   });
   importedRiders.forEach(ir => {
@@ -4149,23 +4178,42 @@ window.addEventListener('DOMContentLoaded', async () => {
       showAuthScreen('reset');
       history.replaceState(null, '', location.pathname);
     } else {
-      const { data: { session } } = await sb.auth.getSession();
+      // ── FATAL FIX: NEVER wipe local data on cloud failure ──
+      // Previous code called clearLocalCacheForLogout() when loadCloudData() failed,
+      // which deleted all user data on any network error. This was the root cause
+      // of "data gone after closing app" that persisted across all previous fixes.
+      //
+      // New rule: local data is ONLY wiped on explicit logout or user-switch.
+      // If cloud fails at startup, show local data and prompt to reconnect.
+      let sessionResult;
+      try {
+        sessionResult = await sb.auth.getSession();
+      } catch(e) {
+        console.error('[Auth] getSession threw:', e);
+        sessionResult = { data: { session: null } };
+      }
+      const session = sessionResult?.data?.session;
       if (session && session.user) {
         CURRENT_USER = session.user;
         const ok = await loadCloudData();
         if (!ok) {
-          // Cloud failed — force re-login to ensure clean state
-          CURRENT_USER = null;
-          clearLocalCacheForLogout();
-          showAuthWrap();
-          showAuthScreen('login');
+          // Cloud load failed — KEEP local data, stay logged in with cached data.
+          // Do NOT clear local cache. User can still see their data from localStorage.
+          console.warn('[App] Cloud load failed — using cached local data');
+          showToast('⚠️ Cloud unreachable — showing cached data. Will sync when connected.');
+          renderRiders(); updateStats(); renderFilterBar();
+          // Schedule a retry when network comes back
+          window.addEventListener('online', async () => {
+            const retryOk = await loadCloudData();
+            if (retryOk) { renderRiders(); updateStats(); renderFilterBar(); }
+          }, { once: true });
         } else {
           renderRiders(); updateStats(); renderFilterBar();
         }
       } else {
-        // No session — wipe any stale data and show login
-        clearLocalCacheForLogout();
-        renderRiders(); updateStats(); renderFilterBar();
+        // No active session — show login.
+        // IMPORTANT: Do NOT wipe local data here — user might be offline and
+        // the session check failed due to network. Local data is their safety net.
         showAuthWrap();
         showAuthScreen('login');
       }
@@ -4173,10 +4221,16 @@ window.addEventListener('DOMContentLoaded', async () => {
     // Listen for auth state changes
     sb.auth.onAuthStateChange((event, session) => {
       if (event === 'SIGNED_OUT') {
+        // Only wipe on explicit sign-out (user initiated)
         CURRENT_USER = null;
         clearLocalCacheForLogout();
         showAuthWrap();
         showAuthScreen('login');
+      } else if (event === 'TOKEN_REFRESHED' && session) {
+        // Keep CURRENT_USER in sync when token auto-refreshes
+        CURRENT_USER = session.user;
+      } else if (event === 'SIGNED_IN' && session) {
+        CURRENT_USER = session.user;
       }
     });
   } else {
