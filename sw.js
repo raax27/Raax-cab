@@ -1,5 +1,5 @@
 // Bump CACHE version on every release to force update
-const CACHE = 'raax-v26-logic-audit';
+const CACHE = 'raax-v28-final-stable';
 
 const STATIC_ASSETS = [
   './manifest.json',
