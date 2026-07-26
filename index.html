@@ -274,11 +274,18 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .login-btn{width:100%;padding:14px;background:var(--accent);border:none;border-radius:12px;color:#fff;font-family:'Nunito',sans-serif;font-size:15px;font-weight:900;cursor:pointer;margin-top:6px;box-shadow:0 4px 18px rgba(168,85,247,.4);transition:all .15s;}
 .login-btn:active{transform:scale(.97);}
 .login-err{font-size:12px;font-weight:700;color:var(--red);text-align:center;margin-top:10px;min-height:18px;}
+/* ── QR feature ── */
+.qrSlotBtn{border:1.5px solid var(--border);background:var(--card);color:var(--muted);font-family:'Nunito',sans-serif;font-size:12px;font-weight:800;padding:7px 12px;border-radius:8px;cursor:pointer;transition:all .15s;}
+.qrSlotActive{background:var(--accent);border-color:var(--accent);color:#fff;}
+.qr-rider-btn{background:none;border:1px solid var(--border);border-radius:7px;padding:4px 8px;font-size:11px;font-weight:800;color:var(--muted);cursor:pointer;margin-left:6px;}
+@keyframes qrScanAnim{0%{top:8%}50%{top:88%}100%{top:8%}}
 </style>
 </head>
 <body>
 <!-- Supabase JS client SDK (loaded from CDN) -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.7/dist/umd/supabase.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js"></script>
 
 <!-- ── AUTH LOGIN/SIGNUP/RESET SCREEN ── -->
 <div class="pin-wrap" id="authWrap" style="justify-content:flex-start;padding-top:50px;overflow-y:auto;">
@@ -498,6 +505,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         <label>📅</label>
         <input type="date" id="logDate" onchange="onDateChange()">
         <button class="sbtn" onclick="saveEntry()">💾 Save</button>
+        <button class="sbtn" onclick="openQRScanner()" id="qrScanBtn" title="Scan Rider QR" style="background:var(--accent);min-width:44px;padding:0 12px;">📷 Scan</button>
       </div>
 
       <div class="sl" style="display:flex;align-items:center;justify-content:space-between;">
@@ -687,7 +695,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         </div>
       </div>
 
-      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.2.5 — ✅ Final Stable</div>
+      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.3.0 — 📷 QR Scan</div>
     </div>
 
   </div>
@@ -702,6 +710,86 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 </div>
 
 <div class="toast" id="toast"></div>
+
+<!-- ══════════════════════════════════════════════════
+     QR SCANNER MODAL — admin scans rider QR to mark Present
+     ══════════════════════════════════════════════════ -->
+<div class="mbg" id="qrScanModal">
+  <div class="modal" style="padding:0;overflow:hidden;max-width:360px;">
+    <div style="padding:18px 20px 14px;display:flex;align-items:center;justify-content:space-between;background:var(--surface);border-bottom:1px solid var(--border);">
+      <div>
+        <div style="font-weight:900;font-size:16px;">📷 Scan Rider QR</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px;" id="qrScanHint">Point camera at rider's QR code</div>
+      </div>
+      <button onclick="closeQRScanner()" style="background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;padding:4px;">✕</button>
+    </div>
+
+    <!-- Camera feed -->
+    <div style="position:relative;background:#000;aspect-ratio:1/1;overflow:hidden;">
+      <video id="qrVideo" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;"></video>
+      <canvas id="qrCanvas" style="display:none;"></canvas>
+      <!-- Targeting overlay -->
+      <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;">
+        <div style="width:64%;aspect-ratio:1/1;border:3px solid var(--accent);border-radius:16px;box-shadow:0 0 0 2000px rgba(0,0,0,.45);">
+          <!-- Corner marks -->
+          <div style="position:absolute;top:0;left:0;width:22px;height:22px;border-top:3px solid var(--accent);border-left:3px solid var(--accent);border-radius:4px 0 0 0;"></div>
+          <div style="position:absolute;top:0;right:0;width:22px;height:22px;border-top:3px solid var(--accent);border-right:3px solid var(--accent);border-radius:0 4px 0 0;"></div>
+          <div style="position:absolute;bottom:0;left:0;width:22px;height:22px;border-bottom:3px solid var(--accent);border-left:3px solid var(--accent);border-radius:0 0 0 4px;"></div>
+          <div style="position:absolute;bottom:0;right:0;width:22px;height:22px;border-bottom:3px solid var(--accent);border-right:3px solid var(--accent);border-radius:0 0 4px 0;"></div>
+          <!-- Scan line animation -->
+          <div id="qrScanLine" style="position:absolute;left:6%;width:88%;height:2px;background:linear-gradient(90deg,transparent,var(--accent),transparent);animation:qrScanAnim 1.6s ease-in-out infinite;"></div>
+        </div>
+      </div>
+      <!-- Status overlay -->
+      <div id="qrStatusOverlay" style="display:none;position:absolute;inset:0;background:rgba(0,0,0,.7);display:flex;flex-direction:column;align-items:center;justify-content:center;">
+        <div id="qrStatusIcon" style="font-size:52px;margin-bottom:12px;">✅</div>
+        <div id="qrStatusText" style="font-size:16px;font-weight:900;color:#fff;text-align:center;padding:0 20px;"></div>
+      </div>
+    </div>
+
+    <!-- Controls -->
+    <div style="padding:14px 16px;background:var(--surface);">
+      <!-- Slot override -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+        <span style="font-size:12px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Mark as</span>
+        <div style="display:flex;gap:8px;">
+          <button id="qrSlotMorning" onclick="setQRSlot('morning')" class="qrSlotBtn qrSlotActive">🌅 Morning</button>
+          <button id="qrSlotEvening" onclick="setQRSlot('evening')" class="qrSlotBtn">🌆 Evening</button>
+        </div>
+      </div>
+      <!-- Paid status toggle -->
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+        <span style="font-size:12px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Payment</span>
+        <div style="display:flex;gap:8px;">
+          <button id="qrPayPaid" onclick="setQRPay('Y')" class="qrSlotBtn">💸 Paid</button>
+          <button id="qrPayUnpaid" onclick="setQRPay('N')" class="qrSlotBtn qrSlotActive">⏳ Not Paid</button>
+        </div>
+      </div>
+      <button onclick="closeQRScanner()" style="width:100%;background:var(--border);border:none;border-radius:10px;color:var(--text);font-weight:800;padding:11px;cursor:pointer;font-size:13px;">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════
+     QR VIEWER MODAL — shows rider's QR code to share/screenshot
+     ══════════════════════════════════════════════════ -->
+<div class="mbg" id="qrViewModal">
+  <div class="modal" style="padding:24px;text-align:center;max-width:320px;">
+    <div style="font-weight:900;font-size:17px;margin-bottom:4px;" id="qrViewTitle">Rider QR Code</div>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:18px;">Screenshot and share with admin to log rides</div>
+    <!-- QR code renders here -->
+    <div id="qrViewCode" style="background:#fff;border-radius:12px;padding:16px;display:inline-block;margin-bottom:16px;"></div>
+    <!-- Name + slot info below QR -->
+    <div style="background:var(--card);border-radius:10px;padding:12px 16px;margin-bottom:16px;text-align:left;">
+      <div style="font-size:13px;font-weight:900;margin-bottom:4px;" id="qrViewName">—</div>
+      <div style="font-size:11px;color:var(--muted);">Show this QR to admin when entering the car</div>
+    </div>
+    <div style="display:flex;gap:10px;">
+      <button onclick="downloadRiderQR()" style="flex:1;background:var(--accent);border:none;border-radius:10px;color:#fff;font-weight:900;padding:11px;cursor:pointer;font-size:13px;">⬇ Download</button>
+      <button onclick="closeQRViewer()" style="flex:1;background:var(--border);border:none;border-radius:10px;color:var(--text);font-weight:800;padding:11px;cursor:pointer;font-size:13px;">Close</button>
+    </div>
+  </div>
+</div>
 
 <!-- PHOTO MODAL -->
 <div class="mbg" id="photoModal">
@@ -2492,7 +2580,9 @@ function renderRiders() {
         ${avHTML(rider)}
         <div class="rinfo">
           <div class="rname">${rn}</div>
-          <div class="rsub">${totalRides} rides logged</div>
+          <div class="rsub">${totalRides} rides logged
+            <button class="qr-rider-btn" data-action="showqr" data-rider="${rn}" title="Show QR Code">QR</button>
+          </div>
         </div>
         <div class="ramts">
           <div class="apaid">₹${s.paid}</div>
@@ -2526,22 +2616,21 @@ function renderRiders() {
 
   // Attach delegated event listener to container
   con.onclick = (e) => {
-    const btn = e.target.closest('[data-field]');
+    const btn   = e.target.closest('[data-field]');
     const photo = e.target.closest('[data-action="photo"]');
+    const qrbtn = e.target.closest('[data-action="showqr"]');
     if (btn) {
       const rider = btn.dataset.rider;
       const field = btn.dataset.field;
       const val   = btn.dataset.val;
-      // Validate field and val are whitelisted — no user input reaches tog()
       const allowedFields = ['mP','mPaid','eP','ePaid'];
       const allowedVals   = ['P','A','Y','N'];
       if (allowedFields.includes(field) && allowedVals.includes(val)) {
         tog(rider, field, val);
       }
     }
-    if (photo) {
-      openPhotoModal(photo.dataset.rider);
-    }
+    if (photo) { openPhotoModal(photo.dataset.rider); }
+    if (qrbtn) { showRiderQR(qrbtn.dataset.rider); }
   };
 }
 
@@ -4268,6 +4357,276 @@ window.addEventListener('DOMContentLoaded', async () => {
       });
     }).catch(() => {});
   }
+});
+
+// ══════════════════════════════════════════════════════════════
+// QR FEATURE — Rider QR generation + admin scanning
+// ══════════════════════════════════════════════════════════════
+
+// ── QR payload format ──
+// { app:'raax', v:1, rider:'Tangu' }
+// Date + slot are determined at SCAN TIME by the admin
+// so the rider keeps the same static QR forever.
+
+const QR_APP_TAG = 'raax';
+const QR_VERSION = 1;
+
+// ── State ──
+let _qrStream      = null;       // active MediaStream
+let _qrAnimFrame   = null;       // requestAnimationFrame handle
+let _qrSlot        = 'morning';  // 'morning' | 'evening'
+let _qrPay         = 'N';        // 'Y' | 'N'
+let _qrScanned     = false;      // debounce: ignore after first good scan
+let _qrViewRider   = null;       // rider name currently shown in viewer
+let _qrInstance    = null;       // QRCode library instance
+
+// ── Slot auto-detection ──
+function detectSlot() {
+  const h = new Date().getHours();
+  // Before 13:00 → morning, 13:00+ → evening
+  return h < 13 ? 'morning' : 'evening';
+}
+
+function setQRSlot(slot) {
+  _qrSlot = slot;
+  document.getElementById('qrSlotMorning').className = 'qrSlotBtn' + (slot==='morning' ? ' qrSlotActive' : '');
+  document.getElementById('qrSlotEvening').className = 'qrSlotBtn' + (slot==='evening' ? ' qrSlotActive' : '');
+}
+
+function setQRPay(pay) {
+  _qrPay = pay;
+  document.getElementById('qrPayPaid').className   = 'qrSlotBtn' + (pay==='Y' ? ' qrSlotActive' : '');
+  document.getElementById('qrPayUnpaid').className = 'qrSlotBtn' + (pay==='N' ? ' qrSlotActive' : '');
+}
+
+// ── Open QR Scanner ──
+async function openQRScanner() {
+  if (!CURRENT_USER) { showToast('Sign in first'); return; }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    showToast('❌ Camera not available on this device');
+    return;
+  }
+  // Auto-detect slot from current time
+  setQRSlot(detectSlot());
+  setQRPay('N');
+  _qrScanned = false;
+
+  document.getElementById('qrStatusOverlay').style.display = 'none';
+  document.getElementById('qrScanHint').textContent = 'Point camera at rider\'s QR code';
+  document.getElementById('qrScanModal').classList.add('open');
+
+  try {
+    _qrStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
+    });
+    const video = document.getElementById('qrVideo');
+    video.srcObject = _qrStream;
+    video.play();
+    video.onloadedmetadata = () => _startQRDecode();
+  } catch(e) {
+    showToast('❌ Camera permission denied');
+    closeQRScanner();
+  }
+}
+
+function _startQRDecode() {
+  const video  = document.getElementById('qrVideo');
+  const canvas = document.getElementById('qrCanvas');
+  const ctx    = canvas.getContext('2d', { willReadFrequently: true });
+
+  function tick() {
+    if (_qrScanned) return;
+    if (video.readyState === video.HAVE_ENOUGH_DATA) {
+      canvas.width  = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      try {
+        const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const result  = typeof jsQR !== 'undefined'
+          ? jsQR(imgData.data, imgData.width, imgData.height, { inversionAttempts: 'dontInvert' })
+          : null;
+        if (result && result.data) {
+          _processQRData(result.data);
+          return; // stop loop on successful scan
+        }
+      } catch(_) {}
+    }
+    _qrAnimFrame = requestAnimationFrame(tick);
+  }
+  _qrAnimFrame = requestAnimationFrame(tick);
+}
+
+function _processQRData(raw) {
+  _qrScanned = true; // prevent double-processing
+
+  let payload;
+  try {
+    payload = JSON.parse(raw);
+  } catch(_) {
+    _showScanResult('error', '❌ Invalid QR code');
+    setTimeout(() => { _qrScanned = false; _startQRDecode(); }, 2000);
+    return;
+  }
+
+  // Validate it's a Raax QR
+  if (!payload || payload.app !== QR_APP_TAG || !payload.rider) {
+    _showScanResult('error', '❌ Not a Raax rider QR');
+    setTimeout(() => { _qrScanned = false; _startQRDecode(); }, 2000);
+    return;
+  }
+
+  const riderName = payload.rider;
+
+  // Check rider exists in app
+  const rider = RIDERS.find(r => r.name === riderName);
+  if (!rider) {
+    _showScanResult('error', `❌ "${riderName}" not in your riders list`);
+    setTimeout(() => { _qrScanned = false; _startQRDecode(); }, 2500);
+    return;
+  }
+
+  // Get current log date
+  const date = document.getElementById('logDate').value;
+  if (!date) {
+    _showScanResult('error', '❌ No date selected in Log');
+    setTimeout(() => { _qrScanned = false; _startQRDecode(); }, 2000);
+    return;
+  }
+
+  // Apply to the current day's entry
+  const day = getDay(date);
+  const d   = day[riderName];
+  const slot = _qrSlot; // 'morning' or 'evening'
+  const presField = slot === 'morning' ? 'mP'    : 'eP';
+  const paidField = slot === 'morning' ? 'mPaid' : 'ePaid';
+
+  // Check if already marked for this slot
+  if (d[presField] === 'P') {
+    _showScanResult('warn', `⚠️ ${riderName} already marked Present (${slot})`);
+    setTimeout(() => { _qrScanned = false; _startQRDecode(); }, 2000);
+    return;
+  }
+
+  // Mark Present + payment status
+  d[presField] = 'P';
+  d[paidField] = _qrPay;
+
+  // Lock fare
+  if ((d.mP === 'P' || d.eP === 'P') && !d.fareAtTime) {
+    d.fareAtTime = riderFare(riderName);
+  }
+
+  save();
+  renderRiders();
+  updateStats();
+
+  // Push to cloud
+  if (CLOUD_READY && CURRENT_USER) {
+    enqueueAndPush({ type: 'trip', payload: { date, rider: riderName, d } });
+  }
+
+  // Log it
+  syncLog('INFO', `QR_SCAN ${date}/${riderName}/${slot}`, { pay: _qrPay });
+
+  const slotLabel = slot === 'morning' ? '🌅 Morning' : '🌆 Evening';
+  const payLabel  = _qrPay === 'Y' ? '· Paid ✓' : '· Not Paid';
+  _showScanResult('success', `✅ ${riderName}\n${slotLabel} ${payLabel}`);
+
+  // Auto-close after 2.5s
+  setTimeout(() => closeQRScanner(), 2500);
+}
+
+function _showScanResult(type, msg) {
+  const overlay  = document.getElementById('qrStatusOverlay');
+  const icon     = document.getElementById('qrStatusIcon');
+  const text     = document.getElementById('qrStatusText');
+  icon.textContent = type === 'success' ? '✅' : type === 'warn' ? '⚠️' : '❌';
+  text.textContent = msg;
+  overlay.style.display = 'flex';
+}
+
+function closeQRScanner() {
+  if (_qrAnimFrame) { cancelAnimationFrame(_qrAnimFrame); _qrAnimFrame = null; }
+  if (_qrStream) { _qrStream.getTracks().forEach(t => t.stop()); _qrStream = null; }
+  const video = document.getElementById('qrVideo');
+  if (video) { video.srcObject = null; }
+  document.getElementById('qrScanModal').classList.remove('open');
+  _qrScanned = false;
+}
+
+// ── QR Viewer — show a rider's QR code ──
+function showRiderQR(riderName) {
+  if (!riderName || !RIDERS.find(r => r.name === riderName)) {
+    showToast('Rider not found');
+    return;
+  }
+  _qrViewRider = riderName;
+
+  document.getElementById('qrViewTitle').textContent = riderName + '\'s QR Code';
+  document.getElementById('qrViewName').textContent  = riderName;
+
+  // Clear previous QR
+  const container = document.getElementById('qrViewCode');
+  container.innerHTML = '';
+
+  // Generate QR with qrcodejs
+  if (typeof QRCode === 'undefined') {
+    container.innerHTML = '<div style="padding:24px;color:#666;font-size:13px;">QR library not loaded</div>';
+  } else {
+    const payload = JSON.stringify({ app: QR_APP_TAG, v: QR_VERSION, rider: riderName });
+    _qrInstance = new QRCode(container, {
+      text:          payload,
+      width:         220,
+      height:        220,
+      colorDark:     '#000000',
+      colorLight:    '#ffffff',
+      correctLevel:  QRCode.CorrectLevel.H
+    });
+  }
+
+  document.getElementById('qrViewModal').classList.add('open');
+}
+
+function closeQRViewer() {
+  document.getElementById('qrViewModal').classList.remove('open');
+  _qrViewRider = null;
+  _qrInstance  = null;
+}
+
+function downloadRiderQR() {
+  if (!_qrViewRider) return;
+  const container = document.getElementById('qrViewCode');
+  const img = container.querySelector('img') || container.querySelector('canvas');
+  if (!img) { showToast('QR not ready'); return; }
+
+  try {
+    // Get image data URL
+    let dataUrl;
+    if (img.tagName === 'CANVAS') {
+      dataUrl = img.toDataURL('image/png');
+    } else {
+      // Draw img onto a canvas to get data URL
+      const c = document.createElement('canvas');
+      c.width = img.width || 220; c.height = img.height || 220;
+      c.getContext('2d').drawImage(img, 0, 0);
+      dataUrl = c.toDataURL('image/png');
+    }
+    const a = document.createElement('a');
+    a.href     = dataUrl;
+    a.download = 'Raax-QR-' + _qrViewRider + '.png';
+    a.click();
+    showToast('⬇ QR downloaded for ' + _qrViewRider);
+  } catch(e) {
+    showToast('Could not download — try screenshot');
+  }
+}
+
+// Close QR modals on backdrop click
+document.getElementById('qrScanModal').addEventListener('click', function(e) {
+  if (e.target === this) closeQRScanner();
+});
+document.getElementById('qrViewModal').addEventListener('click', function(e) {
+  if (e.target === this) closeQRViewer();
 });
 </script>
 </body>
