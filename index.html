@@ -288,8 +288,8 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 <body>
 <!-- Supabase JS client SDK (loaded from CDN) -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.7/dist/umd/supabase.min.js"></script>
-<!-- QR generation: qrcode npm package via jsdelivr (replaces broken cdnjs qrcodejs URL) -->
-<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+<!-- QR generation: qrcodejs UMD build via jsdelivr -->
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 <!-- QR scanning: jsqr via jsdelivr -->
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 
@@ -1169,7 +1169,7 @@ async function doSignup() {
 
 // ── FORGOT PASSWORD ───────────────────────────────────────────
 async function doForgot() {
-  if (!CLOUD_READY) { showToast('⚠️ Cloud not configured. See setup guide.'); return; }
+  if (!CLOUD_READY) { showToast('⚠️ Cloud not configured. Please sign in with your account first.'); return; }
   const email = document.getElementById('forgotEmail').value.trim();
   const err   = document.getElementById('forgotErr');
   const btn   = document.getElementById('forgotBtn');
@@ -1178,16 +1178,26 @@ async function doForgot() {
   if (!email) { err.textContent = 'Enter your email.'; return; }
 
   btn.disabled = true; btn.textContent = 'Sending…';
-  const { error } = await sb.auth.resetPasswordForEmail(email, {
-    redirectTo: window.location.origin + window.location.pathname + '#reset'
-  });
-  btn.disabled = false; btn.textContent = 'Send Reset Email';
-
-  if (error) { err.textContent = error.message; haptic('error'); return; }
-
-  haptic('success');
-  showToast('📧 Reset link sent! Check your inbox.');
-  setTimeout(() => showAuthScreen('login'), 1500);
+  try {
+    const result = await sb.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin + window.location.pathname
+    });
+    // If there's an error OR no data (Supabase silently drops when site URL not whitelisted)
+    if (result.error || !result.data) {
+      const msg = result.error ? result.error.message : 'Could not send email — please check your Supabase dashboard and ensure the Site URL is whitelisted under Authentication → URL Configuration.';
+      err.textContent = msg;
+      haptic('error');
+    } else {
+      haptic('success');
+      showToast('📧 Reset link sent! Check your inbox.');
+      setTimeout(() => showAuthScreen('login'), 1500);
+    }
+  } catch (e) {
+    err.textContent = 'Network error — please check your internet connection and try again.';
+    console.error('[Forgot] Error:', e);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Send Reset Email';
+  }
 }
 
 // ── RESET PASSWORD (after clicking link in email) ─────────────
@@ -1203,16 +1213,26 @@ async function doReset() {
   if (p1 !== p2)            { err.textContent = 'Passwords do not match.'; return; }
 
   btn.disabled = true; btn.textContent = 'Updating…';
-  const { error } = await sb.auth.updateUser({ password: p1 });
-  btn.disabled = false; btn.textContent = 'Update Password';
-  if (error) { err.textContent = error.message; haptic('error'); return; }
-
-  haptic('success');
-  showToast('✅ Password updated! Please sign in.');
-  // Sign out and return to login
-  await sb.auth.signOut();
-  CURRENT_USER = null;
-  showAuthScreen('login');
+  try {
+    const result = await sb.auth.updateUser({ password: p1 });
+    // Also check for no data (silent failure case)
+    if (result.error || !result.data) {
+      const msg = result.error ? result.error.message : 'Password update failed.';
+      err.textContent = msg;
+      haptic('error');
+    } else {
+      haptic('success');
+      showToast('✅ Password updated! Please sign in.');
+      await sb.auth.signOut();
+      CURRENT_USER = null;
+      showAuthScreen('login');
+    }
+  } catch (e) {
+    err.textContent = 'Network error — please check your internet connection and try again.';
+    console.error('[Reset] Error:', e);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Update Password';
+  }
 }
 
 // ── LOGOUT ────────────────────────────────────────────────────
@@ -2428,10 +2448,6 @@ document.getElementById('cpModal').addEventListener('click', function(e) { if (e
 
 function getDay(date) {
   if (!entries[date]) entries[date] = {};
-  // Always ensure ALL current riders exist in this day's entry
-  RIDERS.forEach(r => {
-    if (!entries[date][r.name]) entries[date][r.name] = {mP:'',mPaid:'',eP:'',ePaid:''};
-  });
   return entries[date];
 }
 
@@ -4272,7 +4288,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   // ── Cloud Mode (Supabase) ──
   if (initCloud()) {
     // Check if user clicked password reset link
-    if (location.hash === '#reset' || location.hash.includes('type=recovery')) {
+    if (location.hash === '#reset' || location.search.includes('type=recovery')) {
       showAuthWrap();
       showAuthScreen('reset');
       history.replaceState(null, '', location.pathname);
@@ -4581,39 +4597,21 @@ function showRiderQR(riderName) {
 
   const payload = JSON.stringify({ app: QR_APP_TAG, v: QR_VERSION, rider: riderName });
 
-  // Use qrcode npm library (QRCode.toCanvas / QRCode.toDataURL)
-  // API differs from qrcodejs — no constructor, uses static methods
-  if (typeof QRCode !== 'undefined' && typeof QRCode.toCanvas === 'function') {
-    const canvas = document.createElement('canvas');
-    container.appendChild(canvas);
-    QRCode.toCanvas(canvas, payload, {
-      width:          220,
-      margin:         2,
-      color:          { dark: '#000000', light: '#ffffff' },
-      errorCorrectionLevel: 'H'
-    }, (err) => {
-      if (err) {
-        console.error('[QR] Generation error:', err);
-        container.innerHTML = '<div style="padding:24px;color:#888;font-size:13px;">QR generation failed</div>';
-      }
-    });
-  } else {
-    // Fallback: try toDataURL (same library, alternative method)
-    if (typeof QRCode !== 'undefined' && typeof QRCode.toDataURL === 'function') {
-      QRCode.toDataURL(payload, { width: 220, margin: 2, errorCorrectionLevel: 'H' }, (err, url) => {
-        if (!err && url) {
-          const img = document.createElement('img');
-          img.src = url;
-          img.style.cssText = 'width:220px;height:220px;border-radius:8px;';
-          container.appendChild(img);
-        } else {
-          container.innerHTML = '<div style="padding:24px;color:#888;font-size:13px;">QR generation failed</div>';
-        }
-      });
-    } else {
-      container.innerHTML = '<div style="padding:24px;color:#888;font-size:13px;">QR library loading… try again</div>';
-    }
+  if (typeof QRCode === 'undefined') {
+    container.innerHTML = '<div style="padding:24px;color:#f85149;font-size:13px;">QR library failed to load — check network connection</div>';
+    document.getElementById('qrViewModal').classList.add('open');
+    return;
   }
+
+  // qrcodejs constructor API
+  var qr = new QRCode(container, {
+    text: payload,
+    width:          220,
+    height:         220,
+    colorDark:      '#000000',
+    colorLight:     '#ffffff',
+    correctLevel:   QRCode.CorrectLevel.H
+  });
 
   document.getElementById('qrViewModal').classList.add('open');
 }
