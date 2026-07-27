@@ -50,12 +50,16 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .screen{display:none;padding:14px;} .screen.active{display:block;}
 
 /* TOP BAR (date + save) */
-.top-bar{display:flex;align-items:center;gap:8px;background:var(--surface);border:1.5px solid var(--border);border-radius:var(--r);padding:10px 12px;margin-bottom:14px;}
-.top-bar label{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:var(--muted);white-space:nowrap;}
-.top-bar input[type=date]{flex:1;font-family:'JetBrains Mono',monospace;background:var(--card);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:8px;font-size:13px;-webkit-appearance:none;}
-.top-bar input:focus{outline:none;border-color:var(--accent);}
+.top-bar{display:flex;flex-direction:column;gap:8px;background:var(--surface);border:1.5px solid var(--border);border-radius:var(--r);padding:10px 12px;margin-bottom:14px;}
+.top-bar-row1{display:flex;align-items:center;gap:8px;}
+.top-bar-row1 label{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:1px;color:var(--muted);white-space:nowrap;}
+.top-bar-row1 input[type=date]{flex:1;font-family:'JetBrains Mono',monospace;background:var(--card);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:8px;font-size:13px;-webkit-appearance:none;}
+.top-bar-row1 input:focus{outline:none;border-color:var(--accent);}
+.top-bar-row2{display:flex;gap:8px;}
+.top-bar-row2 .sbtn{flex:1;justify-content:center;}
 .sbtn{display:flex;align-items:center;gap:5px;background:var(--accent);color:#fff;border:none;border-radius:10px;padding:9px 15px;font-family:'Nunito',sans-serif;font-size:13px;font-weight:900;cursor:pointer;white-space:nowrap;flex-shrink:0;box-shadow:0 2px 12px rgba(168,85,247,.4);transition:all .15s;}
 .sbtn:active{transform:scale(.95);}
+.sbtn-scan{background:linear-gradient(135deg,#7c3aed,#a855f7);}
 
 /* RIDER CARD */
 .rc{background:var(--surface);border:1.5px solid var(--border);border-radius:var(--r);margin-bottom:12px;overflow:hidden;transition:border-color .2s;}
@@ -284,8 +288,10 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 <body>
 <!-- Supabase JS client SDK (loaded from CDN) -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.7/dist/umd/supabase.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js"></script>
+<!-- QR generation: qrcode npm package via jsdelivr (replaces broken cdnjs qrcodejs URL) -->
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+<!-- QR scanning: jsqr via jsdelivr -->
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 
 <!-- ── AUTH LOGIN/SIGNUP/RESET SCREEN ── -->
 <div class="pin-wrap" id="authWrap" style="justify-content:flex-start;padding-top:50px;overflow-y:auto;">
@@ -500,12 +506,16 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         <div class="ic" onclick="dismissInstall()">✕</div>
       </div>
 
-      <!-- DATE + SAVE BUTTON AT TOP -->
+      <!-- DATE + ACTION BUTTONS -->
       <div class="top-bar">
-        <label>📅</label>
-        <input type="date" id="logDate" onchange="onDateChange()">
-        <button class="sbtn" onclick="saveEntry()">💾 Save</button>
-        <button class="sbtn" onclick="openQRScanner()" id="qrScanBtn" title="Scan Rider QR" style="background:var(--accent);min-width:44px;padding:0 12px;">📷 Scan</button>
+        <div class="top-bar-row1">
+          <label>📅</label>
+          <input type="date" id="logDate" onchange="onDateChange()">
+        </div>
+        <div class="top-bar-row2">
+          <button class="sbtn" onclick="saveEntry()">💾 Save</button>
+          <button class="sbtn sbtn-scan" onclick="openQRScanner()" id="qrScanBtn">📷 Scan QR</button>
+        </div>
       </div>
 
       <div class="sl" style="display:flex;align-items:center;justify-content:space-between;">
@@ -695,7 +705,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         </div>
       </div>
 
-      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.3.0 — 📷 QR Scan</div>
+      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.3.1 — 📷 QR Fixed</div>
     </div>
 
   </div>
@@ -4569,19 +4579,40 @@ function showRiderQR(riderName) {
   const container = document.getElementById('qrViewCode');
   container.innerHTML = '';
 
-  // Generate QR with qrcodejs
-  if (typeof QRCode === 'undefined') {
-    container.innerHTML = '<div style="padding:24px;color:#666;font-size:13px;">QR library not loaded</div>';
-  } else {
-    const payload = JSON.stringify({ app: QR_APP_TAG, v: QR_VERSION, rider: riderName });
-    _qrInstance = new QRCode(container, {
-      text:          payload,
-      width:         220,
-      height:        220,
-      colorDark:     '#000000',
-      colorLight:    '#ffffff',
-      correctLevel:  QRCode.CorrectLevel.H
+  const payload = JSON.stringify({ app: QR_APP_TAG, v: QR_VERSION, rider: riderName });
+
+  // Use qrcode npm library (QRCode.toCanvas / QRCode.toDataURL)
+  // API differs from qrcodejs — no constructor, uses static methods
+  if (typeof QRCode !== 'undefined' && typeof QRCode.toCanvas === 'function') {
+    const canvas = document.createElement('canvas');
+    container.appendChild(canvas);
+    QRCode.toCanvas(canvas, payload, {
+      width:          220,
+      margin:         2,
+      color:          { dark: '#000000', light: '#ffffff' },
+      errorCorrectionLevel: 'H'
+    }, (err) => {
+      if (err) {
+        console.error('[QR] Generation error:', err);
+        container.innerHTML = '<div style="padding:24px;color:#888;font-size:13px;">QR generation failed</div>';
+      }
     });
+  } else {
+    // Fallback: try toDataURL (same library, alternative method)
+    if (typeof QRCode !== 'undefined' && typeof QRCode.toDataURL === 'function') {
+      QRCode.toDataURL(payload, { width: 220, margin: 2, errorCorrectionLevel: 'H' }, (err, url) => {
+        if (!err && url) {
+          const img = document.createElement('img');
+          img.src = url;
+          img.style.cssText = 'width:220px;height:220px;border-radius:8px;';
+          container.appendChild(img);
+        } else {
+          container.innerHTML = '<div style="padding:24px;color:#888;font-size:13px;">QR generation failed</div>';
+        }
+      });
+    } else {
+      container.innerHTML = '<div style="padding:24px;color:#888;font-size:13px;">QR library loading… try again</div>';
+    }
   }
 
   document.getElementById('qrViewModal').classList.add('open');
@@ -4596,28 +4627,28 @@ function closeQRViewer() {
 function downloadRiderQR() {
   if (!_qrViewRider) return;
   const container = document.getElementById('qrViewCode');
-  const img = container.querySelector('img') || container.querySelector('canvas');
-  if (!img) { showToast('QR not ready'); return; }
+  const canvas = container.querySelector('canvas');
+  const img    = container.querySelector('img');
 
   try {
-    // Get image data URL
     let dataUrl;
-    if (img.tagName === 'CANVAS') {
-      dataUrl = img.toDataURL('image/png');
+    if (canvas) {
+      dataUrl = canvas.toDataURL('image/png');
+    } else if (img && img.src) {
+      // dataURL img from toDataURL fallback
+      dataUrl = img.src;
     } else {
-      // Draw img onto a canvas to get data URL
-      const c = document.createElement('canvas');
-      c.width = img.width || 220; c.height = img.height || 220;
-      c.getContext('2d').drawImage(img, 0, 0);
-      dataUrl = c.toDataURL('image/png');
+      showToast('QR not ready — try again');
+      return;
     }
     const a = document.createElement('a');
     a.href     = dataUrl;
-    a.download = 'Raax-QR-' + _qrViewRider + '.png';
+    a.download = 'Raax-QR-' + _qrViewRider.replace(/\s+/g, '-') + '.png';
     a.click();
     showToast('⬇ QR downloaded for ' + _qrViewRider);
   } catch(e) {
-    showToast('Could not download — try screenshot');
+    console.error('[QR] Download error:', e);
+    showToast('Could not download — try screenshot instead');
   }
 }
 
