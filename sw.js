@@ -1,5 +1,5 @@
 // Bump CACHE version on every release to force update
-const CACHE = 'raax-v30-qr-fixed';
+const CACHE = 'raax-v31-auth-fix';
 
 const STATIC_ASSETS = [
   './manifest.json',
