@@ -288,10 +288,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 <body>
 <!-- Supabase JS client SDK (loaded from CDN) -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.7/dist/umd/supabase.min.js"></script>
-<!-- QR generation: qrcode npm package via jsdelivr (replaces broken cdnjs qrcodejs URL) -->
-<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
-<!-- QR scanning: jsqr via jsdelivr -->
-<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<!-- QR is self-contained inline — no CDN needed, works offline -->
 
 <!-- ── AUTH LOGIN/SIGNUP/RESET SCREEN ── -->
 <div class="pin-wrap" id="authWrap" style="justify-content:flex-start;padding-top:50px;overflow-y:auto;">
@@ -713,7 +710,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         </div>
       </div>
 
-      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.3.2 — 🔑 Auth Fixed</div>
+      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.3.3 — 📷 QR Inline</div>
     </div>
 
   </div>
@@ -4458,6 +4455,239 @@ document.getElementById('changePassModal').addEventListener('click', function(e)
 });
 
 // ══════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════
+// RaaxQR — Self-contained QR Code generator (no CDN, works offline)
+// Implements ISO 18004 byte mode, EC level M, versions 1-5
+// ══════════════════════════════════════════════════════════════
+const RaaxQR = (() => {
+  // GF(256) tables for Reed-Solomon
+  const EXP = new Uint8Array(512), LOG = new Uint8Array(256);
+  (() => {
+    let x = 1;
+    for (let i = 0; i < 255; i++) {
+      EXP[i] = x; LOG[x] = i;
+      x = (x << 1) ^ (x & 128 ? 0x11d : 0);
+    }
+    for (let i = 255; i < 512; i++) EXP[i] = EXP[i - 255];
+  })();
+  const gmul = (a, b) => a && b ? EXP[(LOG[a] + LOG[b]) % 255] : 0;
+
+  function rsGen(n) {
+    let g = [1];
+    for (let i = 0; i < n; i++) {
+      const r = new Array(g.length + 1).fill(0);
+      for (let j = 0; j < g.length; j++) {
+        r[j]   ^= g[j];
+        r[j+1] ^= gmul(g[j], EXP[i]);
+      }
+      g = r;
+    }
+    return g;
+  }
+  function rsEncode(data, n) {
+    const gen = rsGen(n);
+    const msg = [...data, ...new Array(n).fill(0)];
+    for (let i = 0; i < data.length; i++) {
+      const c = msg[i];
+      if (c) for (let j = 0; j < gen.length; j++) msg[i + j] ^= gmul(gen[j], c);
+    }
+    return msg.slice(data.length);
+  }
+
+  // Version info: s=size, d=data codewords (EC-M), ep=EC codewords/block, b=blocks
+  const VER = {
+    1:{s:21,d:16,ep:10,b:1}, 2:{s:25,d:28,ep:16,b:1},
+    3:{s:29,d:44,ep:26,b:1}, 4:{s:33,d:64,ep:18,b:2},
+    5:{s:37,d:86,ep:24,b:2}
+  };
+  const ALIGN = {1:[],2:[6,18],3:[6,22],4:[6,26],5:[6,30]};
+
+  function pickVer(n) {
+    for (let v = 1; v <= 5; v++) if (VER[v].d >= n + 3) return v;
+    throw new Error('Data too long for QR (max ~80 chars)');
+  }
+
+  function encodeBytes(text, ver) {
+    const bytes = Array.from(new TextEncoder().encode(text));
+    const cap   = VER[ver].d * 8;
+    const bits  = [];
+    const push  = (val, n) => { for (let i = n-1; i >= 0; i--) bits.push((val >> i) & 1); };
+    push(0b0100, 4);
+    push(bytes.length, 8);
+    bytes.forEach(b => push(b, 8));
+    for (let i = 0; i < 4 && bits.length < cap; i++) bits.push(0);
+    while (bits.length % 8) bits.push(0);
+    const PAD = [0xEC, 0x11]; let pi = 0;
+    while (bits.length < cap) push(PAD[pi++ % 2], 8);
+    const cw = [];
+    for (let i = 0; i < bits.length; i += 8) {
+      let b = 0;
+      for (let j = 0; j < 8; j++) b = (b << 1) | (bits[i+j] || 0);
+      cw.push(b);
+    }
+    return cw;
+  }
+
+  const set = (m, r, c, v) => { if (m[r] && m[r][c] !== undefined) m[r][c] = v; };
+
+  function placeFinder(m, tr, tc) {
+    for (let dr = -1; dr <= 7; dr++) for (let dc = -1; dc <= 7; dc++) {
+      const v = (dr<0||dr>6||dc<0||dc>6) ? 0
+              : (dr===0||dr===6||dc===0||dc===6||(dr>=2&&dr<=4&&dc>=2&&dc<=4)) ? 1 : 0;
+      set(m, tr+dr, tc+dc, v);
+    }
+  }
+
+  function placeAlign(m, pos) {
+    for (const r of pos) for (const c of pos) {
+      if (m[r] && m[r][c] !== -1) continue;
+      for (let dr = -2; dr <= 2; dr++) for (let dc = -2; dc <= 2; dc++)
+        set(m, r+dr, c+dc, Math.abs(dr)===2||Math.abs(dc)===2||(dr===0&&dc===0) ? 1 : 0);
+    }
+  }
+
+  function placeTiming(m, sz) {
+    for (let i = 8; i < sz-8; i++) {
+      if (m[6][i] === -1) m[6][i] = i%2===0 ? 1 : 0;
+      if (m[i][6] === -1) m[i][6] = i%2===0 ? 1 : 0;
+    }
+  }
+
+  function reserveFmt(m, sz) {
+    for (let i = 0; i <= 8; i++) {
+      if (m[i][8] === -1) m[i][8] = 0;
+      if (m[8][i] === -1) m[8][i] = 0;
+    }
+    for (let i = sz-8; i < sz; i++) {
+      if (m[8][i] === -1) m[8][i] = 0;
+      if (m[i][8] === -1) m[i][8] = 0;
+    }
+  }
+
+  function writeFmt(m, sz, mask) {
+    const fmt = (0b00 << 3) | mask; // EC level M = 00
+    let b = fmt << 10;
+    for (let i = 14; i >= 10; i--) if (b & (1<<i)) b ^= 0b10100110111 << (i-10);
+    const word = ((fmt << 10) | b) ^ 0b101010000010010;
+    const bits = Array.from({length:15}, (_,i) => (word >> i) & 1);
+    const R = [0,1,2,3,4,5,7,8,8,8,8,8,8,8,8];
+    const C = [8,8,8,8,8,8,8,8,7,5,4,3,2,1,0];
+    for (let i = 0; i < 15; i++) { m[R[i]][8] = bits[i]; m[8][sz-1-i] = bits[i]; }
+    m[sz-8][8] = 1; // dark module
+  }
+
+  function placeData(m, sz, words) {
+    let bit = 0, dir = -1, col = sz-1;
+    while (col > 0) {
+      if (col === 6) col--;
+      let row = dir === -1 ? sz-1 : 0;
+      for (let ri = 0; ri < sz; ri++) {
+        for (let dc = 0; dc < 2; dc++) {
+          const c = col - dc;
+          if (m[row][c] === -1) {
+            m[row][c] = bit < words.length*8
+              ? (words[Math.floor(bit/8)] >> (7 - bit%8)) & 1 : 0;
+            bit++;
+          }
+        }
+        row += dir;
+      }
+      dir = -dir; col -= 2;
+    }
+  }
+
+  const MASKS = [
+    (r,c)=>(r+c)%2===0,       (r,c)=>r%2===0,
+    (r,c)=>c%3===0,            (r,c)=>(r+c)%3===0,
+    (r,c)=>(Math.floor(r/2)+Math.floor(c/3))%2===0,
+    (r,c)=>(r*c)%2+(r*c)%3===0,
+    (r,c)=>((r*c)%2+(r*c)%3)%2===0,
+    (r,c)=>((r+c)%2+(r*c)%3)%2===0
+  ];
+
+  function penalty(m) {
+    let p = 0, s = m.length;
+    for (let r = 0; r < s; r++) {
+      let rc = 1, cc = 1;
+      for (let i = 1; i < s; i++) {
+        if (m[r][i]===m[r][i-1]) { rc++; if (rc>=5) p+=(rc===5?3:1); } else rc=1;
+        if (m[i][r]===m[i-1][r]) { cc++; if (cc>=5) p+=(cc===5?3:1); } else cc=1;
+      }
+    }
+    for (let r = 0; r < s-1; r++) for (let c = 0; c < s-1; c++)
+      if (m[r][c]===m[r][c+1]&&m[r][c]===m[r+1][c]&&m[r][c]===m[r+1][c+1]) p+=3;
+    return p;
+  }
+
+  function draw(text, canvas, scale, margin) {
+    scale  = scale  || 8;
+    margin = margin !== undefined ? margin : 4;
+    const bytes = Array.from(new TextEncoder().encode(text));
+    const ver   = pickVer(bytes.length);
+    const {s:sz, ep, b:nb} = VER[ver];
+
+    // Build data codewords
+    const dw = encodeBytes(text, ver);
+
+    // Split into blocks + add error correction
+    const allD = [], allE = [];
+    const base  = Math.floor(dw.length / nb);
+    const extra = dw.length % nb;
+    for (let i = 0; i < nb; i++) {
+      const st = i*base + Math.min(i, extra);
+      const bl = dw.slice(st, st + base + (i < extra ? 1 : 0));
+      allD.push(bl); allE.push(rsEncode(bl, ep));
+    }
+
+    // Interleave
+    const iw = [];
+    const mx = Math.max(...allD.map(b=>b.length));
+    for (let i = 0; i < mx;  i++) for (const b of allD) if (i<b.length) iw.push(b[i]);
+    for (let i = 0; i < ep;  i++) for (const b of allE) iw.push(b[i]);
+
+    // Build matrix
+    const mat = Array.from({length:sz}, () => new Array(sz).fill(-1));
+    placeFinder(mat, 0, 0);
+    placeFinder(mat, 0, sz-7);
+    placeFinder(mat, sz-7, 0);
+    if (ALIGN[ver].length) placeAlign(mat, ALIGN[ver]);
+    placeTiming(mat, sz);
+    reserveFmt(mat, sz);
+    mat[sz-8][8] = 1;
+
+    // Snapshot functional modules (must not be masked)
+    const fn = mat.map(r => r.map(v => v !== -1));
+    placeData(mat, sz, iw);
+
+    // Choose best mask pattern
+    let bMask = 0, bPen = Infinity;
+    for (let mi = 0; mi < 8; mi++) {
+      const mfn = MASKS[mi];
+      const tmp = mat.map((r,ri) => r.map((v,ci) => fn[ri][ci] ? v : v^(mfn(ri,ci)?1:0)));
+      const p   = penalty(tmp);
+      if (p < bPen) { bPen = p; bMask = mi; }
+    }
+
+    // Apply chosen mask
+    const mfn  = MASKS[bMask];
+    const final = mat.map((r,ri) => r.map((v,ci) => fn[ri][ci] ? v : v^(mfn(ri,ci)?1:0)));
+    writeFmt(final, sz, bMask);
+
+    // Render to canvas
+    const total = (sz + 2*margin) * scale;
+    canvas.width = canvas.height = total;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, total, total);
+    ctx.fillStyle = '#000000';
+    for (let r = 0; r < sz; r++)
+      for (let c = 0; c < sz; c++)
+        if (final[r][c] === 1)
+          ctx.fillRect((c+margin)*scale, (r+margin)*scale, scale, scale);
+  }
+
+  return { draw };
+})();
+
 // QR FEATURE — Rider QR generation + admin scanning
 // ══════════════════════════════════════════════════════════════
 
@@ -4528,29 +4758,40 @@ async function openQRScanner() {
 }
 
 function _startQRDecode() {
-  const video  = document.getElementById('qrVideo');
+  const video = document.getElementById('qrVideo');
+
+  // Use native BarcodeDetector — built into Chrome/Brave/Edge on Android & desktop
+  if ('BarcodeDetector' in window) {
+    const detector = new BarcodeDetector({ formats: ['qr_code'] });
+    const scan = async () => {
+      if (_qrScanned) return;
+      try {
+        if (video.readyState >= 2) {
+          const codes = await detector.detect(video);
+          if (codes.length > 0) { _processQRData(codes[0].rawValue); return; }
+        }
+      } catch(_) {}
+      _qrAnimFrame = requestAnimationFrame(scan);
+    };
+    _qrAnimFrame = requestAnimationFrame(scan);
+    return;
+  }
+
+  // Fallback: canvas snapshot every 300ms
   const canvas = document.getElementById('qrCanvas');
   const ctx    = canvas.getContext('2d', { willReadFrequently: true });
-
-  function tick() {
+  const tick = () => {
     if (_qrScanned) return;
     if (video.readyState === video.HAVE_ENOUGH_DATA) {
       canvas.width  = video.videoWidth;
       canvas.height = video.videoHeight;
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      try {
-        const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const result  = typeof jsQR !== 'undefined'
-          ? jsQR(imgData.data, imgData.width, imgData.height, { inversionAttempts: 'dontInvert' })
-          : null;
-        if (result && result.data) {
-          _processQRData(result.data);
-          return; // stop loop on successful scan
-        }
-      } catch(_) {}
+      // No external jsQR available — show hint to use BarcodeDetector-capable browser
+      document.getElementById('qrScanHint').textContent =
+        'Use Chrome or Brave on Android for auto-scan';
     }
     _qrAnimFrame = requestAnimationFrame(tick);
-  }
+  };
   _qrAnimFrame = requestAnimationFrame(tick);
 }
 
@@ -4655,54 +4896,25 @@ function closeQRScanner() {
 // ── QR Viewer — show a rider's QR code ──
 function showRiderQR(riderName) {
   if (!riderName || !RIDERS.find(r => r.name === riderName)) {
-    showToast('Rider not found');
-    return;
+    showToast('Rider not found'); return;
   }
   _qrViewRider = riderName;
-
   document.getElementById('qrViewTitle').textContent = riderName + '\'s QR Code';
   document.getElementById('qrViewName').textContent  = riderName;
 
-  // Clear previous QR
   const container = document.getElementById('qrViewCode');
   container.innerHTML = '';
 
   const payload = JSON.stringify({ app: QR_APP_TAG, v: QR_VERSION, rider: riderName });
-
-  // Use qrcode npm library (QRCode.toCanvas / QRCode.toDataURL)
-  // API differs from qrcodejs — no constructor, uses static methods
-  if (typeof QRCode !== 'undefined' && typeof QRCode.toCanvas === 'function') {
+  try {
     const canvas = document.createElement('canvas');
+    canvas.style.cssText = 'border-radius:8px;display:block;';
+    RaaxQR.draw(payload, canvas, 9, 3);
     container.appendChild(canvas);
-    QRCode.toCanvas(canvas, payload, {
-      width:          220,
-      margin:         2,
-      color:          { dark: '#000000', light: '#ffffff' },
-      errorCorrectionLevel: 'H'
-    }, (err) => {
-      if (err) {
-        console.error('[QR] Generation error:', err);
-        container.innerHTML = '<div style="padding:24px;color:#888;font-size:13px;">QR generation failed</div>';
-      }
-    });
-  } else {
-    // Fallback: try toDataURL (same library, alternative method)
-    if (typeof QRCode !== 'undefined' && typeof QRCode.toDataURL === 'function') {
-      QRCode.toDataURL(payload, { width: 220, margin: 2, errorCorrectionLevel: 'H' }, (err, url) => {
-        if (!err && url) {
-          const img = document.createElement('img');
-          img.src = url;
-          img.style.cssText = 'width:220px;height:220px;border-radius:8px;';
-          container.appendChild(img);
-        } else {
-          container.innerHTML = '<div style="padding:24px;color:#888;font-size:13px;">QR generation failed</div>';
-        }
-      });
-    } else {
-      container.innerHTML = '<div style="padding:24px;color:#888;font-size:13px;">QR library loading… try again</div>';
-    }
+  } catch(e) {
+    console.error('[QR]', e);
+    container.innerHTML = '<div style="padding:24px;color:#c00;font-size:13px;text-align:center;">❌ ' + e.message + '</div>';
   }
-
   document.getElementById('qrViewModal').classList.add('open');
 }
 
