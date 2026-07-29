@@ -710,7 +710,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         </div>
       </div>
 
-      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.3.3 — 📷 QR Inline</div>
+      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.3.4 — 🔑 Reset Fixed</div>
     </div>
 
   </div>
@@ -1017,8 +1017,8 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 
 // ⚠️ PASTE YOUR SUPABASE CREDENTIALS HERE
 // Get them from: Supabase Dashboard → Settings → API
-const SUPABASE_URL  = 'https://kqyaczklqvfiglendrim.supabase.co';
-const SUPABASE_KEY  = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtxeWFjemtscXZmaWdsZW5kcmltIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAyMjc1MjAsImV4cCI6MjA5NTgwMzUyMH0.zR_rtd8S8HIXIFiMWnfW3-gF1BlmllZEot9pELaSSsg';
+const SUPABASE_URL  = '<PASTE_YOUR_PROJECT_URL_HERE>';
+const SUPABASE_KEY  = '<PASTE_YOUR_ANON_KEY_HERE>';
 
 let sb = null;             // Supabase client
 let CURRENT_USER = null;   // Logged-in user object
@@ -1237,20 +1237,45 @@ async function doReset() {
   if (p1 !== p2)             { err.textContent = 'Passwords do not match.'; return; }
 
   btn.disabled = true; btn.textContent = 'Updating…';
+
+  // Verify we have an active session before calling updateUser.
+  // If startup raced ahead, re-check from Supabase now.
+  if (!CURRENT_USER) {
+    try {
+      const { data } = await sb.auth.getSession();
+      if (data?.session?.user) CURRENT_USER = data.session.user;
+    } catch(_) {}
+  }
+  if (!CURRENT_USER) {
+    btn.disabled = false; btn.textContent = 'Update Password';
+    err.textContent = 'Session expired — please request a new reset link.';
+    return;
+  }
+
   const { error } = await sb.auth.updateUser({ password: p1 });
   btn.disabled = false; btn.textContent = 'Update Password';
-  if (error) { err.textContent = error.message; haptic('error'); return; }
+  if (error) {
+    err.textContent = error.message === 'Auth session missing!'
+      ? 'Session expired — please request a new reset link.'
+      : error.message;
+    haptic('error');
+    return;
+  }
 
   haptic('success');
-  showToast('✅ Password updated! Please sign in again.');
-  // BUG-2+6 FIX: Set flag so the SIGNED_OUT event from signOut() does NOT
-  // trigger clearLocalCacheForLogout() — we must NOT wipe user data here.
+  showToast('✅ Password updated! Signing you in…');
+  // Sign in with new password automatically after a short delay
+  const emailForLogin = CURRENT_USER?.email || '';
   window._resetInProgress = true;
   await sb.auth.signOut();
   window._resetInProgress = false;
   CURRENT_USER = null;
   clearFields(['resetPass','resetPass2']);
+  // Pre-fill email on login screen for convenience
+  const emailInput = document.getElementById('loginEmail');
+  if (emailInput && emailForLogin) emailInput.value = emailForLogin;
   showAuthScreen('login');
+  err.textContent = '';
 }
 
 // ── LOGOUT ────────────────────────────────────────────────────
@@ -4312,19 +4337,38 @@ window.addEventListener('DOMContentLoaded', async () => {
 
   // ── Cloud Mode (Supabase) ──
   if (initCloud()) {
-    // Check if user clicked password reset link
-    if (location.hash === '#reset' || location.hash.includes('type=recovery')) {
+
+    // ── Password Reset link detection ──
+    // Supabase sends reset links with tokens in the URL fragment:
+    // #access_token=xxx&refresh_token=yyy&type=recovery
+    // We MUST extract these tokens and call setSession() BEFORE clearing the hash,
+    // otherwise updateUser() will fail with "Auth session missing!"
+    const hashParams = new URLSearchParams(window.location.hash.slice(1));
+    const hashType   = hashParams.get('type');
+    const hashAccess = hashParams.get('access_token');
+    const hashRefresh= hashParams.get('refresh_token');
+
+    if (hashType === 'recovery' && hashAccess) {
+      // Step 1: Set the session from the URL tokens FIRST
+      try {
+        const { data, error } = await sb.auth.setSession({
+          access_token:  hashAccess,
+          refresh_token: hashRefresh || ''
+        });
+        if (!error && data?.user) {
+          CURRENT_USER = data.user;
+        }
+      } catch(e) {
+        console.error('[Auth] setSession from reset link failed:', e);
+      }
+      // Step 2: NOW safe to clear the URL hash (session already established)
+      history.replaceState(null, '', location.pathname);
+      // Step 3: Show reset form
       showAuthWrap();
       showAuthScreen('reset');
-      history.replaceState(null, '', location.pathname);
+
     } else {
-      // ── FATAL FIX: NEVER wipe local data on cloud failure ──
-      // Previous code called clearLocalCacheForLogout() when loadCloudData() failed,
-      // which deleted all user data on any network error. This was the root cause
-      // of "data gone after closing app" that persisted across all previous fixes.
-      //
-      // New rule: local data is ONLY wiped on explicit logout or user-switch.
-      // If cloud fails at startup, show local data and prompt to reconnect.
+      // ── Normal startup: check existing session ──
       let sessionResult;
       try {
         sessionResult = await sb.auth.getSession();
@@ -4337,12 +4381,9 @@ window.addEventListener('DOMContentLoaded', async () => {
         CURRENT_USER = session.user;
         const ok = await loadCloudData();
         if (!ok) {
-          // Cloud load failed — KEEP local data, stay logged in with cached data.
-          // Do NOT clear local cache. User can still see their data from localStorage.
           console.warn('[App] Cloud load failed — using cached local data');
           showToast('⚠️ Cloud unreachable — showing cached data. Will sync when connected.');
           renderRiders(); updateStats(); renderFilterBar();
-          // Schedule a retry when network comes back
           window.addEventListener('online', async () => {
             const retryOk = await loadCloudData();
             if (retryOk) { renderRiders(); updateStats(); renderFilterBar(); }
@@ -4352,8 +4393,7 @@ window.addEventListener('DOMContentLoaded', async () => {
         }
       } else {
         // No active session — show login.
-        // IMPORTANT: Do NOT wipe local data here — user might be offline and
-        // the session check failed due to network. Local data is their safety net.
+        // IMPORTANT: Do NOT wipe local data here.
         showAuthWrap();
         showAuthScreen('login');
       }
