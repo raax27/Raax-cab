@@ -283,6 +283,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 .qrSlotActive{background:var(--accent);border-color:var(--accent);color:#fff;}
 .qr-rider-btn{background:none;border:1px solid var(--border);border-radius:7px;padding:4px 8px;font-size:11px;font-weight:800;color:var(--muted);cursor:pointer;margin-left:6px;}
 @keyframes qrScanAnim{0%{top:8%}50%{top:88%}100%{top:8%}}
+@keyframes loaderSlide{0%{transform:translateX(-100%)}50%{transform:translateX(0)}100%{transform:translateX(100%)}}
 </style>
 </head>
 <body>
@@ -485,7 +486,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
     </div>
     <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
       <div class="hd" id="hdrDate">—</div>
-      <span id="syncBadge" style="display:none;font-size:10px;font-weight:800;padding:2px 8px;border-radius:8px;font-family:'JetBrains Mono',monospace;letter-spacing:.3px;cursor:pointer;" onclick="manualFlushSync()"></span>
+      <span id="syncBadge" title="Tap to retry sync" style="display:none;font-size:10px;font-weight:800;padding:2px 8px;border-radius:8px;font-family:'JetBrains Mono',monospace;letter-spacing:.3px;cursor:pointer;" onclick="manualFlushSync()"></span>
     </div>
   </div>
 
@@ -510,7 +511,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
       <div class="top-bar">
         <div class="top-bar-row1">
           <label>📅</label>
-          <input type="date" id="logDate" onchange="onDateChange()">
+          <input type="date" id="logDate" onchange="onDateChange()" max="">
         </div>
         <div class="top-bar-row2">
           <button class="sbtn" onclick="saveEntry()">💾 Save</button>
@@ -710,7 +711,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         </div>
       </div>
 
-      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.3.4 — 🔑 Reset Fixed</div>
+      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.3.5 — 🔒 Security + UX Patch</div>
     </div>
 
   </div>
@@ -725,6 +726,15 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 </div>
 
 <div class="toast" id="toast"></div>
+
+<!-- U5: Loading overlay shown while fetching cloud data at startup -->
+<div id="loadingOverlay" style="display:none;position:fixed;inset:0;z-index:9000;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;">
+  <div style="font-size:48px;">🚗</div>
+  <div style="font-size:16px;font-weight:900;color:var(--text);">Loading your data…</div>
+  <div style="width:48px;height:4px;background:var(--border);border-radius:4px;overflow:hidden;">
+    <div style="width:100%;height:100%;background:var(--accent);border-radius:4px;animation:loaderSlide 1.2s ease-in-out infinite;"></div>
+  </div>
+</div>
 
 <!-- ══════════════════════════════════════════════════
      QR SCANNER MODAL — admin scans rider QR to mark Present
@@ -812,6 +822,11 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
     <div style="font-weight:900;font-size:17px;margin-bottom:6px;">🔑 Change Password</div>
     <div style="font-size:12px;color:var(--muted);margin-bottom:18px;">Update your account password</div>
     <div class="fin">
+      <label>Current Password</label>
+      <input type="password" id="cpCurPass" placeholder="Your current password" autocomplete="current-password"
+        style="text-align:left;letter-spacing:0;font-family:Nunito,sans-serif;font-size:15px;font-weight:600;">
+    </div>
+    <div class="fin" style="margin-top:10px;">
       <label>New Password <span style="color:var(--muted);font-size:11px;">(min 6 characters)</span></label>
       <input type="password" id="cpNewPass" placeholder="New password" autocomplete="new-password" minlength="6"
         style="text-align:left;letter-spacing:0;font-family:Nunito,sans-serif;font-size:15px;font-weight:600;">
@@ -1671,9 +1686,18 @@ function syncLog(level, msg, detail) {
 function showSyncLog() {
   const logs = JSON.parse(localStorage.getItem('rsPWA_syncLog') || '[]');
   if (!logs.length) { showToast('No sync log entries'); return; }
-  const txt = logs.map(l => `${l.ts.slice(11,19)} [${l.level}] ${l.msg}${l.detail ? ' — '+JSON.stringify(l.detail) : ''}`).join('\n');
-  const w = window.open('', '_blank', 'width=700,height=500');
-  w.document.write('<pre style="font-size:12px;padding:12px;">' + txt + '</pre>');
+  // S1 FIX: Use textContent instead of document.write to prevent XSS
+  // Log data may contain user-controlled strings (rider names, error msgs)
+  const lines = logs.map(l =>
+    `${l.ts.slice(11,19)} [${l.level}] ${l.msg}${l.detail ? ' — '+JSON.stringify(l.detail) : ''}`
+  ).join('\n');
+  const w = window.open('', '_blank', 'width=720,height=520');
+  if (!w) { showToast('Pop-up blocked — allow pop-ups to see log'); return; }
+  const pre = w.document.createElement('pre');
+  pre.style.cssText = 'font-size:12px;padding:16px;font-family:monospace;white-space:pre-wrap;word-break:break-all;';
+  pre.textContent = lines; // safe — no HTML injection possible
+  w.document.body.style.margin = '0';
+  w.document.body.appendChild(pre);
 }
 
 // Per-key push locks — prevents out-of-order writes for the same (date,rider).
@@ -2288,6 +2312,18 @@ function toggleFilter() {
   const open = bar.style.display === 'flex';
   bar.style.display = open ? 'none' : 'flex';
   if (!open) renderFilterBar();
+  updateFilterBtnState();
+}
+
+function updateFilterBtnState() {
+  // U7 FIX: Show active state on Filter button when a filter is applied
+  const btn = document.getElementById('filterToggleBtn');
+  if (!btn) return;
+  const isFiltered = activeFilter !== null && activeFilter.length < RIDERS.length;
+  btn.style.background     = isFiltered ? 'var(--accent)' : 'none';
+  btn.style.color          = isFiltered ? '#fff' : 'var(--muted)';
+  btn.style.borderColor    = isFiltered ? 'var(--accent)' : 'var(--border)';
+  btn.textContent          = isFiltered ? '⚙ Filter (' + activeFilter.length + ')' : '⚙ Filter';
 }
 
 function renderFilterBar() {
@@ -2304,17 +2340,17 @@ function renderFilterBar() {
 }
 
 function toggleRiderFilter(name) {
-  if (!activeFilter) activeFilter = RIDERS.map(r => r.name); // start with all
+  if (!activeFilter) activeFilter = RIDERS.map(r => r.name);
   const idx = activeFilter.indexOf(name);
   if (idx >= 0) activeFilter.splice(idx, 1);
   else activeFilter.push(name);
-  if (activeFilter.length === RIDERS.length) activeFilter = null; // all = no filter
-  saveFilter(); renderFilterBar(); renderRiders(); updateStats();
+  if (activeFilter.length === RIDERS.length) activeFilter = null;
+  saveFilter(); renderFilterBar(); renderRiders(); updateStats(); updateFilterBtnState();
 }
 
 function filterAll() {
   activeFilter = null;
-  saveFilter(); renderFilterBar(); renderRiders(); updateStats();
+  saveFilter(); renderFilterBar(); renderRiders(); updateStats(); updateFilterBtnState();
 }
 
 // ── PIN AUTH ──────────────────────────────────────────────────
@@ -3331,10 +3367,13 @@ function clearAll(){
 }
 
 // ── TOAST ─────────────────────────────────────────────────────
-function showToast(msg){
+function showToast(msg, duration) {
   const t=document.getElementById('toast');
-  t.textContent=msg;t.classList.add('show');
-  setTimeout(()=>t.classList.remove('show'),2400);
+  t.textContent=msg; t.classList.add('show');
+  // U3 FIX: Use longer duration for error/warning toasts so users can read them
+  const ms = duration || (msg.includes('❌')||msg.includes('⚠')||msg.includes('error')||msg.includes('Error') ? 4500 : 3000);
+  clearTimeout(t._timer);
+  t._timer = setTimeout(()=>t.classList.remove('show'), ms);
 }
 function formatDate(str){
   return new Date(str+'T00:00:00').toLocaleDateString('en-IN',{weekday:'short',day:'numeric',month:'short'});
@@ -3456,7 +3495,7 @@ function renderFuel() {
   // per-litre rate for each entry
   con.innerHTML = filtered.map((f, i) => {
     const realIdx = fuelEntries.indexOf(f);
-    const rate = (f.amount / f.litres).toFixed(1);
+    const rate = (f.litres > 0) ? (f.amount / f.litres).toFixed(1) : '—';
     return `<div class="hcard" style="margin-bottom:10px;">
       <div class="hhdr" style="cursor:pointer;" onclick="openFuelModal(${realIdx})">
         <div>
@@ -4198,6 +4237,11 @@ async function hashMpin(pin) {
 }
 
 function showMpinModal(mode) {
+  // B8 FIX: MPIN setup requires authenticated user — prevents PIN being set
+  // in unauthenticated state via UI manipulation
+  if (mode === 'setup' && !CURRENT_USER) {
+    showToast('Sign in first to set an MPIN'); return;
+  }
   _mpinMode = mode;
   _mpinBuf = '';
   _mpinFirstEntry = '';
@@ -4321,7 +4365,10 @@ async function forceUpdate() {
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
-  document.getElementById('logDate').value = todayStr();
+  const today = todayStr();
+  const logDateEl = document.getElementById('logDate');
+  logDateEl.value = today;
+  logDateEl.max   = today; // B3 FIX: prevent future date selection
   // Set month pickers to most recent data month (or current month if no data)
   const allDates = Object.keys(entries).sort();
   const fallback = new Date().toISOString().slice(0,7);
@@ -4379,21 +4426,24 @@ window.addEventListener('DOMContentLoaded', async () => {
       const session = sessionResult?.data?.session;
       if (session && session.user) {
         CURRENT_USER = session.user;
+        // U5 FIX: Show loading overlay while fetching cloud data
+        const overlay = document.getElementById('loadingOverlay');
+        if (overlay) overlay.style.display = 'flex';
         const ok = await loadCloudData();
+        if (overlay) overlay.style.display = 'none';
         if (!ok) {
           console.warn('[App] Cloud load failed — using cached local data');
           showToast('⚠️ Cloud unreachable — showing cached data. Will sync when connected.');
-          renderRiders(); updateStats(); renderFilterBar();
+          renderRiders(); updateStats(); renderFilterBar(); updateFilterBtnState();
           window.addEventListener('online', async () => {
             const retryOk = await loadCloudData();
-            if (retryOk) { renderRiders(); updateStats(); renderFilterBar(); }
+            if (retryOk) { renderRiders(); updateStats(); renderFilterBar(); updateFilterBtnState(); }
           }, { once: true });
         } else {
-          renderRiders(); updateStats(); renderFilterBar();
+          renderRiders(); updateStats(); renderFilterBar(); updateFilterBtnState();
         }
       } else {
         // No active session — show login.
-        // IMPORTANT: Do NOT wipe local data here.
         showAuthWrap();
         showAuthScreen('login');
       }
@@ -4465,33 +4515,63 @@ window.addEventListener('DOMContentLoaded', async () => {
 // ── CHANGE PASSWORD (for logged-in users via Settings) ────────
 function showChangePasswordModal() {
   if (!CURRENT_USER) { showToast('Sign in first'); return; }
-  clearFields(['cpNewPass','cpNewPass2']);
+  clearFields(['cpCurPass','cpNewPass','cpNewPass2']);
   document.getElementById('cpPassErr').textContent = '';
   document.getElementById('changePassModal').classList.add('open');
-  setTimeout(() => document.getElementById('cpNewPass').focus(), 200);
+  setTimeout(() => document.getElementById('cpCurPass').focus(), 200);
 }
 function closeChangePasswordModal() {
   document.getElementById('changePassModal').classList.remove('open');
 }
 async function doChangePassword() {
-  if (!CLOUD_READY || !CURRENT_USER) return;
+  if (!CLOUD_READY || !CURRENT_USER) { showToast('Sign in first'); return; }
+  const cur = document.getElementById('cpCurPass').value;
   const p1  = document.getElementById('cpNewPass').value;
   const p2  = document.getElementById('cpNewPass2').value;
   const err = document.getElementById('cpPassErr');
   const btn = document.getElementById('cpPassBtn');
   err.textContent = '';
-  if (!p1 || p1.length < 6) { err.textContent = 'Password must be at least 6 characters.'; return; }
-  if (p1 !== p2)             { err.textContent = 'Passwords do not match.'; return; }
-  btn.disabled = true; btn.textContent = 'Updating…';
+  if (!cur)                          { err.textContent = 'Enter your current password.'; return; }
+  if (!p1 || p1.length < 6)         { err.textContent = 'New password must be at least 6 characters.'; return; }
+  if (p1 !== p2)                     { err.textContent = 'New passwords do not match.'; return; }
+  if (cur === p1)                    { err.textContent = 'New password must differ from current.'; return; }
+  btn.disabled = true; btn.textContent = 'Verifying…';
+  // B7 FIX: Verify current password by re-signing in before allowing the change
+  const { error: signInErr } = await sb.auth.signInWithPassword({
+    email: CURRENT_USER.email, password: cur
+  });
+  if (signInErr) {
+    btn.disabled = false; btn.textContent = 'Update Password';
+    err.textContent = 'Current password is incorrect.';
+    haptic('error'); return;
+  }
+  btn.textContent = 'Updating…';
   const { error } = await sb.auth.updateUser({ password: p1 });
   btn.disabled = false; btn.textContent = 'Update Password';
   if (error) { err.textContent = error.message; haptic('error'); return; }
   haptic('success');
   closeChangePasswordModal();
+  clearFields(['cpCurPass','cpNewPass','cpNewPass2']);
   showToast('✅ Password changed successfully!');
 }
 document.getElementById('changePassModal').addEventListener('click', function(e) {
   if (e.target === this) closeChangePasswordModal();
+});
+// U4 FIX: Add missing backdrop-close handlers for remaining modals
+document.getElementById('fuelModal').addEventListener('click', function(e) {
+  if (e.target === this) closeFuelModal();
+});
+document.getElementById('riderPendingModal').addEventListener('click', function(e) {
+  if (e.target === this) closeRiderPending();
+});
+document.getElementById('emailModal').addEventListener('click', function(e) {
+  if (e.target === this) closeEmailModal();
+});
+document.getElementById('mpinModal').addEventListener('click', function(e) {
+  if (e.target === this) { if (_mpinMode !== 'verify') closeMpinModal(); }
+});
+document.getElementById('installHelpModal').addEventListener('click', function(e) {
+  if (e.target === this) closeInstallHelp();
 });
 
 // ══════════════════════════════════════════════════════════════
