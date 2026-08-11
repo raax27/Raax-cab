@@ -711,7 +711,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         </div>
       </div>
 
-      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.3.5 — 🔒 Security + UX Patch</div>
+      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.3.6 — ☁️ Sync Fixed</div>
     </div>
 
   </div>
@@ -1354,22 +1354,26 @@ async function onAuthSuccess(signupName) {
 
   const ok = await loadCloudData();
   if (!ok) {
-    showToast('❌ Could not load your data. Please try again.');
-    return;
-  }
-
-  // After cloud load, check if migration is needed
-  const cloudIsEmpty = !RIDERS.length && !Object.keys(entries).length && !fuelEntries.length;
-  if (hadLocal && cloudIsEmpty) {
-    // Restore the snapshot temporarily so migration can read it
-    RIDERS      = localSnapshot.riders;
-    entries     = localSnapshot.entries;
-    fuelEntries = localSnapshot.fuel;
-    showConfirm(
-      '☁️ Upload existing data?',
-      `Found ${localSnapshot.riders.length} riders + data from before. Upload to your cloud account?`,
-      () => migrateLocalToCloud()
-    );
+    // FIX 1+5: Don't return early — always render the app with whatever data we have
+    // Previously returning here left user on a blank screen
+    showToast('⚠️ Could not load cloud data — using cached data. Will retry when online.');
+    window.addEventListener('online', async () => {
+      const retryOk = await loadCloudData();
+      if (retryOk) { renderRiders(); updateStats(); renderFilterBar(); updateFilterBtnState(); }
+    }, { once: true });
+  } else {
+    // After cloud load, check if migration is needed
+    const cloudIsEmpty = !RIDERS.length && !Object.keys(entries).length && !fuelEntries.length;
+    if (hadLocal && cloudIsEmpty) {
+      RIDERS      = localSnapshot.riders;
+      entries     = localSnapshot.entries;
+      fuelEntries = localSnapshot.fuel;
+      showConfirm(
+        '☁️ Upload existing data?',
+        `Found ${localSnapshot.riders.length} riders + data from before. Upload to your cloud account?`,
+        () => migrateLocalToCloud()
+      );
+    }
   }
 
   if (signupName) {
@@ -1377,21 +1381,15 @@ async function onAuthSuccess(signupName) {
     await cloudSaveSettings();
   }
 
-  renderRiders(); updateStats(); renderFilterBar();
+  renderRiders(); updateStats(); renderFilterBar(); updateFilterBtnState();
   goTo('log');
 
-  // Flush any pending sync queue (e.g. if offline edits accumulated)
-  if (SYNC_QUEUE.length) {
-    scheduleSyncFlush(500);
-  }
+  if (SYNC_QUEUE.length) scheduleSyncFlush(500);
   updateSyncBadge();
 
-  // Prompt to set MPIN if not yet configured (and not skipped)
   setTimeout(() => {
     const skipped = localStorage.getItem('rsPWA_mpin_skipped') === '1';
-    if (!MPIN_HASH && !skipped) {
-      showMpinModal('setup');
-    }
+    if (!MPIN_HASH && !skipped) showMpinModal('setup');
   }, 1000);
 }
 
@@ -1422,38 +1420,33 @@ async function loadCloudData() {
   // Always remember the current user
   localStorage.setItem('rsPWA_lastUid', CURRENT_USER.id);
 
-  // CRITICAL: flush any pending sync writes BEFORE reading.
-  // Otherwise we'd overwrite local unsaved changes with stale cloud data.
-  if (SYNC_QUEUE.length > 0) {
-    console.log('[Cloud] Flushing ' + SYNC_QUEUE.length + ' pending writes before read…');
-    await flushSyncQueueAndWait();
-  }
-
-  // CRITICAL FIX: Force a fresh session/token BEFORE reading.
-  // getSession() can return a session whose access token has technically expired —
-  // if a query fires with a stale JWT, Postgres RLS silently returns 0 rows
-  // (no error thrown) because auth.uid() doesn't resolve correctly.
-  // refreshSession() guarantees we have a valid, current token for the reads below.
+  // Step 1: Refresh token FIRST so queue writes and reads use a valid token
   try {
     const { data: refreshed, error: refreshErr } = await sb.auth.refreshSession();
     if (refreshErr) {
-      syncLog('ERROR', 'Session refresh failed before load', refreshErr.message);
+      syncLog('ERROR', 'Session refresh failed', refreshErr.message);
     } else if (refreshed && refreshed.session) {
-      CURRENT_USER = refreshed.session.user; // keep CURRENT_USER in sync with fresh token
-      syncLog('INFO', 'Session refreshed before load', { expiresAt: refreshed.session.expires_at });
+      CURRENT_USER = refreshed.session.user;
+      syncLog('INFO', 'Session refreshed', { expiresAt: refreshed.session.expires_at });
     }
   } catch(e) {
     syncLog('ERROR', 'Session refresh threw', e.message);
   }
 
-  // Remember what was in localStorage BEFORE this load, to sanity-check the cloud response
+  // Step 2: Flush pending writes AFTER token refresh so writes use the fresh token
+  if (SYNC_QUEUE.length > 0) {
+    console.log('[Cloud] Flushing ' + SYNC_QUEUE.length + ' pending writes before read…');
+    await flushSyncQueueAndWait();
+  }
+
+  // Step 3: Remember what was in localStorage to detect suspicious empty reads
   const prevLocalEntries = JSON.parse(localStorage.getItem('rsPWA_entries') || '{}');
   const prevLocalDateCount = Object.keys(prevLocalEntries).length;
 
   try {
     // ── Settings ──
     const { data: s, error: se } = await sb.from('settings').select('*').eq('user_id', CURRENT_USER.id).single();
-    if (se && se.code !== 'PGRST116') console.warn('Settings load error:', se); // PGRST116 = no row found, OK for new users
+    if (se && se.code !== 'PGRST116') console.warn('Settings load error:', se);
 
     // ── Riders ──
     const { data: rs, error: re } = await sb.from('riders').select('*').eq('user_id', CURRENT_USER.id).order('created_at');
@@ -5068,6 +5061,7 @@ function downloadRiderQR() {
     showToast('⬇ QR downloaded for ' + _qrViewRider);
   } catch(e) {
     console.error('[QR] Download error:', e);
+  
     showToast('Could not download — try screenshot instead');
   }
 }
