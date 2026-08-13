@@ -711,7 +711,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         </div>
       </div>
 
-      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.3.6 — ☁️ Sync Fixed</div>
+      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.3.7 — ☁️ Cloud Sync Fixed</div>
     </div>
 
   </div>
@@ -1590,6 +1590,7 @@ async function fetchTripEntriesForUser(userId) {
   while (true) {
     const { data: ts, error: te } = await sb.from('trip_entries')
       .select('*').eq('user_id', userId)
+      .order('updated_at', { ascending: true })  // FIX: latest updated_at wins when duplicate rows exist
       .range(from, from + batch - 1);
     if (te) { console.warn('[Cloud] Trip entries load error:', te); throw te; }
     if (!ts || !ts.length) break;
@@ -1618,13 +1619,27 @@ async function cloudSaveTripEntry(date, riderName, d) {
   };
   syncLog('INFO', `PUSH ${date}/${riderName}`, { mP: payload.m_present, mPaid: payload.m_paid, eP: payload.e_present, ePaid: payload.e_paid });
   try {
-    const { error } = await sb.from('trip_entries').upsert(payload, { onConflict: 'user_id,rider_name,trip_date' });
-    if (error) {
-      syncLog('ERROR', `PUSH FAILED ${date}/${riderName}`, error);
-      console.error('[Cloud] Save trip failed:', error, { date, riderName, d });
-      return { ok: false, error };
+    // Try upsert first (requires unique constraint on user_id,rider_name,trip_date)
+    const { error } = await sb.from('trip_entries')
+      .upsert(payload, { onConflict: 'user_id,rider_name,trip_date' });
+    if (!error) {
+      syncLog('INFO', `PUSH OK ${date}/${riderName}`);
+      return { ok: true };
     }
-    syncLog('INFO', `PUSH OK ${date}/${riderName}`);
+    // If upsert fails (e.g. missing unique constraint), fall back to delete+insert
+    syncLog('WARN', `PUSH upsert failed, trying delete+insert ${date}/${riderName}`, error.message);
+    const { error: delErr } = await sb.from('trip_entries').delete()
+      .eq('user_id', CURRENT_USER.id)
+      .eq('rider_name', riderName)
+      .eq('trip_date', date);
+    if (delErr) { syncLog('ERROR', `PUSH delete failed ${date}/${riderName}`, delErr); return { ok: false, error: delErr }; }
+    const { error: insErr } = await sb.from('trip_entries').insert(payload);
+    if (insErr) {
+      syncLog('ERROR', `PUSH insert failed ${date}/${riderName}`, insErr);
+      console.error('[Cloud] Save trip failed:', insErr, { date, riderName, d });
+      return { ok: false, error: insErr };
+    }
+    syncLog('INFO', `PUSH OK (delete+insert) ${date}/${riderName}`);
     return { ok: true };
   } catch(e) {
     syncLog('ERROR', `PUSH THREW ${date}/${riderName}`, e.message);
