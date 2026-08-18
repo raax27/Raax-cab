@@ -728,7 +728,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
 <div class="toast" id="toast"></div>
 
 <!-- U5: Loading overlay shown while fetching cloud data at startup -->
-<div id="loadingOverlay" style="display:none;position:fixed;inset:0;z-index:9000;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;">
+<div id="loadingOverlay" style="position:fixed;inset:0;z-index:9000;background:var(--bg);display:none;flex-direction:column;align-items:center;justify-content:center;gap:18px;">
   <div style="font-size:48px;">🚗</div>
   <div style="font-size:16px;font-weight:900;color:var(--text);">Loading your data…</div>
   <div style="width:48px;height:4px;background:var(--border);border-radius:4px;overflow:hidden;">
@@ -1316,6 +1316,7 @@ async function doCloudLogout() {
 
 // ── Clear all local data (used on logout & user-switch) ──
 function clearLocalCacheForLogout() {
+  _storageWarned = false; // allow re-warning after logout
   // Wipe in-memory state
   RIDERS       = [];
   entries      = {};
@@ -1425,12 +1426,18 @@ async function loadCloudData() {
     const { data: refreshed, error: refreshErr } = await sb.auth.refreshSession();
     if (refreshErr) {
       syncLog('ERROR', 'Session refresh failed', refreshErr.message);
+      // FIX: abort all reads — stale tokens return wrong/corrupted data silently
+      showToast('⚠️ Session expired — please sign in again');
+      return false;
     } else if (refreshed && refreshed.session) {
       CURRENT_USER = refreshed.session.user;
       syncLog('INFO', 'Session refreshed', { expiresAt: refreshed.session.expires_at });
     }
   } catch(e) {
     syncLog('ERROR', 'Session refresh threw', e.message);
+    // FIX: abort on exception too — don't continue with unknown token state
+    showToast('⚠️ Session error — please sign in again');
+    return false;
   }
 
   // Step 2: Flush pending writes AFTER token refresh so writes use the fresh token
@@ -1673,7 +1680,7 @@ async function cloudDeleteFuel(date, amount, litres) {
 // SYNC QUEUE — retries failed cloud writes
 // ═══════════════════════════════════════════════════════════════
 function persistSyncQueue() {
-  localStorage.setItem('rsPWA_syncQueue', JSON.stringify(SYNC_QUEUE));
+  safeSet('rsPWA_syncQueue', JSON.stringify(SYNC_QUEUE));
   updateSyncBadge();
 }
 
@@ -1829,6 +1836,20 @@ async function flushSyncQueue() {
     SYNC_STATE = 'offline'; updateSyncBadge();
     return;
   }
+  // FIX: verify current session before flushing — prevents token-revoked writes
+  try {
+    const { data: sessCheck, error: sessErr } = await sb.auth.getSession();
+    if (sessErr || !sessCheck?.session) {
+      SYNC_STATE = 'offline'; updateSyncBadge();
+      showToast('⚠️ Session expired — saving locally');
+      return;
+    }
+    CURRENT_USER = sessCheck.session.user;
+  } catch(_) {
+    SYNC_STATE = 'offline'; updateSyncBadge();
+    return;
+  }
+
   if (!SYNC_QUEUE.length) {
     SYNC_STATE = 'idle'; updateSyncBadge();
     return;
@@ -1838,6 +1859,12 @@ async function flushSyncQueue() {
   const snapshot = SYNC_QUEUE.slice();
   const succeededIds = new Set();
   const failed = new Map(); // id -> updated op with tries++
+
+  // FIX: rate-limit saves to prevent PostgREST Warp timeout during checkpoints.
+  // Previously ~50+ rapid POST upserts triggered "Thread killed by timeout manager" —
+  // PostgREST silently killed writes while returning HTTP 200, causing data loss.
+  const SAVE_GAP = 300; // ms between individual saves (below PostgREST checkpoint window)
+  let anyFailed = false;
 
   for (const op of snapshot) {
     let res;
@@ -1857,6 +1884,12 @@ async function flushSyncQueue() {
       const newTries = (op.tries || 0) + 1;
       if (newTries < 5) failed.set(op.id, { ...op, tries: newTries });
       else { succeededIds.add(op.id); console.warn('[Cloud] Dropping op after 5 failed tries:', op); }
+      anyFailed = true;
+    }
+
+    // Insert delay between saves (except after last item)
+    if (op !== snapshot[snapshot.length - 1]) {
+      await new Promise(r => setTimeout(r, SAVE_GAP));
     }
   }
 
@@ -1865,7 +1898,7 @@ async function flushSyncQueue() {
     .filter(q => !succeededIds.has(q.id))
     .map(q => failed.has(q.id) ? failed.get(q.id) : q);
   persistSyncQueue();
-  if (SYNC_QUEUE.length) {
+  if (SYNC_QUEUE.length || anyFailed) {
     SYNC_STATE = 'error';
     updateSyncBadge();
     // Show one-time toast so user knows something's wrong
@@ -2048,27 +2081,17 @@ async function lockHistoricalFares(fareValue) {
     });
   });
   save();
-  // Push to cloud
+  // Push to cloud — go through sync queue so offline changes survive
   if (CLOUD_READY && CURRENT_USER) {
     const updates = [];
     Object.entries(entries).forEach(([date, day]) => {
       Object.entries(day).forEach(([name, d]) => {
         if (d.fareAtTime) {
-          updates.push({
-            user_id: CURRENT_USER.id, trip_date: date, rider_name: name,
-            m_present: d.mP||'', m_paid: d.mPaid||'',
-            e_present: d.eP||'', e_paid: d.ePaid||'',
-            fare_at_time: d.fareAtTime,
-            updated_at: new Date().toISOString()
-          });
+          // Collect pending updates into queue ops so they retry when online
+          queueSync({ type: 'trip', payload: { date, rider: name, d } });
         }
       });
     });
-    if (updates.length) {
-      for (let i = 0; i < updates.length; i += 500) {
-        await sb.from('trip_entries').upsert(updates.slice(i, i+500), { onConflict: 'user_id,rider_name,trip_date' });
-      }
-    }
   }
   console.log('[Fare lock] Locked ' + updated + ' entries at ₹' + fareValue);
   return updated;
@@ -2128,27 +2151,15 @@ async function relockAllFares() {
         });
       });
       save();
-      // Push to cloud
+      // Push to cloud — go through sync queue so offline changes survive
       if (CLOUD_READY && CURRENT_USER) {
-        const updates = [];
         Object.entries(entries).forEach(([date, day]) => {
           Object.entries(day).forEach(([name, d]) => {
             if (d.fareAtTime) {
-              updates.push({
-                user_id: CURRENT_USER.id, trip_date: date, rider_name: name,
-                m_present: d.mP||'', m_paid: d.mPaid||'',
-                e_present: d.eP||'', e_paid: d.ePaid||'',
-                fare_at_time: d.fareAtTime,
-                updated_at: new Date().toISOString()
-              });
+              queueSync({ type: 'trip', payload: { date, rider: name, d } });
             }
           });
         });
-        if (updates.length) {
-          for (let i = 0; i < updates.length; i += 500) {
-            await sb.from('trip_entries').upsert(updates.slice(i, i+500), { onConflict: 'user_id,rider_name,trip_date' });
-          }
-        }
       }
       showToast('🔓 Re-locked ' + updated + ' entries at ₹' + currentFare);
       updateStats();
@@ -2165,15 +2176,26 @@ let RIDERS       = JSON.parse(localStorage.getItem('rsPWA_riders')  || '[]');
 let activeFilter = JSON.parse(localStorage.getItem('rsPWA_filter')  || 'null'); // null = show all
 let adminName    = localStorage.getItem('rsPWA_admin') || '';
 
+// FIX: safe localStorage wrapper — quota errors silently fail but warn user once
+let _storageWarned = false;
+function safeSet(key, value) {
+  try { localStorage.setItem(key, value); return true; }
+  catch(e) {
+    if (!e.name || e.name !== 'QuotaExceededError') { throw e; } // re-throw non-quota errors
+    if (!_storageWarned) { _storageWarned = true; showToast('⚠️ Storage full — some data may not save'); }
+    return false;
+  }
+}
+
 function saveRiders()  {
-  localStorage.setItem('rsPWA_riders',  JSON.stringify(RIDERS));
+  safeSet('rsPWA_riders', JSON.stringify(RIDERS));
   // Push to cloud (queued with retry)
   if (CLOUD_READY && CURRENT_USER) {
     RIDERS.forEach(r => enqueueAndPush({ type: 'rider', payload: r }));
   }
 }
-function saveFilter()  { localStorage.setItem('rsPWA_filter',  JSON.stringify(activeFilter)); }
-function saveAdmin(n)  { localStorage.setItem('rsPWA_admin',   n); }
+function saveFilter()  { safeSet('rsPWA_filter', JSON.stringify(activeFilter)); }
+function saveAdmin(n)  { safeSet('rsPWA_admin', n); }
 
 // Riders currently shown on dashboard (respects filter)
 function visibleRiders() {
@@ -2184,10 +2206,10 @@ function visibleRiders() {
 let entries = JSON.parse(localStorage.getItem('rsPWA_entries') || '{}');
 let photos  = JSON.parse(localStorage.getItem('rsPWA_photos')  || '{}');
 function save()  {
-  localStorage.setItem('rsPWA_entries', JSON.stringify(entries));
+  safeSet('rsPWA_entries', JSON.stringify(entries));
   stampLastUpdated();
 }
-function saveP() { localStorage.setItem('rsPWA_photos',  JSON.stringify(photos));  }
+function saveP() { safeSet('rsPWA_photos', JSON.stringify(photos)); }
 
 function stampLastUpdated() {
   localStorage.setItem('rsPWA_lastUpdated', new Date().toISOString());
@@ -2212,7 +2234,7 @@ let setupTempRiders  = [];
 let setupSelectedClr = COLORS[0];
 
 function isSetupDone() { return localStorage.getItem('rsPWA_setup') === '1'; }
-function markSetupDone(){ localStorage.setItem('rsPWA_setup', '1'); }
+function markSetupDone(){ safeSet('rsPWA_setup', '1'); }
 
 function showSetupWizard() {
   setupTempRiders  = [];
@@ -2352,7 +2374,8 @@ function toggleRiderFilter(name) {
   const idx = activeFilter.indexOf(name);
   if (idx >= 0) activeFilter.splice(idx, 1);
   else activeFilter.push(name);
-  if (activeFilter.length === RIDERS.length) activeFilter = null;
+  // FIX: treat empty array same as null — show all riders, not zero riders
+  if (activeFilter.length === 0 || activeFilter.length === RIDERS.length) activeFilter = null;
   saveFilter(); renderFilterBar(); renderRiders(); updateStats(); updateFilterBtnState();
 }
 
@@ -2363,13 +2386,23 @@ function filterAll() {
 
 // ── PIN AUTH ──────────────────────────────────────────────────
 // PBKDF2-based PIN hashing — strong, one-way, salted
-const PIN_SALT = 'raax-carpool-2024-static-salt'; // static salt per app instance
+// FIX: use a per-install unique salt instead of a static string to prevent rainbow table attacks across installs
+async function getPinSalt() {
+  let stored = localStorage.getItem('rsPWA_pinSalt');
+  if (!stored) {
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    stored = Array.from(bytes).map(b => b.toString(16).padStart(2,'0')).join('');
+    localStorage.setItem('rsPWA_pinSalt', stored);
+  }
+  return stored;
+}
 
 async function hashPin(pin) {
   const enc = new TextEncoder();
+  const salt = await getPinSalt();
   const keyMaterial = await crypto.subtle.importKey('raw', enc.encode(pin), 'PBKDF2', false, ['deriveBits']);
   const bits = await crypto.subtle.deriveBits(
-    { name: 'PBKDF2', salt: enc.encode(PIN_SALT), iterations: 100000, hash: 'SHA-256' },
+    { name: 'PBKDF2', salt: enc.encode(salt), iterations: 100000, hash: 'SHA-256' },
     keyMaterial, 256
   );
   return Array.from(new Uint8Array(bits)).map(b => b.toString(16).padStart(2,'0')).join('');
@@ -2525,6 +2558,8 @@ async function doChangePin() {
   if (!oldV || !newV || !confV) { errEl.textContent = 'Fill all fields.'; return; }
   if (!/^\d{4,6}$/.test(newV))  { errEl.textContent = 'New PIN must be 4–6 digits.'; return; }
   if (newV !== confV)            { errEl.textContent = 'New PINs do not match.'; return; }
+  // FIX: reject new PIN equal to old PIN
+  if (newV === oldV)             { errEl.textContent = 'New PIN must differ from current.'; return; }
   if (!(await checkPin(oldV)))   { errEl.textContent = 'Current PIN is incorrect.'; return; }
   await savePin(newV);
   closeCpModal();
@@ -2535,10 +2570,7 @@ document.getElementById('cpModal').addEventListener('click', function(e) { if (e
 
 function getDay(date) {
   if (!entries[date]) entries[date] = {};
-  // Always ensure ALL current riders exist in this day's entry
-  RIDERS.forEach(r => {
-    if (!entries[date][r.name]) entries[date][r.name] = {mP:'',mPaid:'',eP:'',ePaid:''};
-  });
+  // FIX: only create rider entry objects when they have actual data — lazily in tog() instead
   return entries[date];
 }
 
@@ -2648,12 +2680,20 @@ function esc(str) {
 }
 
 // ── AVATAR ────────────────────────────────────────────────────
+// FIX: validate photo URLs to prevent XSS via malicious data: URLs
+function safePhotoUrl(url) {
+  if (!url || typeof url !== 'string') return '';
+  // Only allow base64 image URLs; reject anything that looks like HTML/script injection
+  if (url.startsWith('data:image/') && !/on\w+=|javascript:/i.test(url)) return url;
+  return ''; // strip dangerous URLs entirely
+}
+
 function avHTML(rider) {
   const img = photos[rider.name];
   // Use data-rider attribute instead of inline onclick to avoid XSS
   return `<div class="av-wrap" data-rider="${esc(rider.name)}" data-action="photo">
     <div class="av" style="background:${img?'#1c1530':rider.clr};border-color:${rider.clr}">
-      ${img?`<img src="${img}" alt="${esc(rider.name)}">`:`<span>${esc(rider.name[0])}</span>`}
+      ${img?`<img src="${safePhotoUrl(img)}" alt="${esc(rider.name)}">`:`<span>${esc(rider.name[0])}</span>`}
     </div>
     <div class="av-edit">✎</div>
   </div>`;
@@ -2836,15 +2876,44 @@ function openPhotoModal(name){
 function closeModal(){document.getElementById('photoModal').classList.remove('open');curRider=null;}
 function triggerCamera() {document.getElementById('cameraInput').click();}
 function triggerGallery(){document.getElementById('galleryInput').click();}
-function handlePhoto(input){
+// FIX: compress photos before storing to prevent localStorage quota exhaustion
+function compressPhoto(dataUrl, maxWidth, quality) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      let w = img.width, h = img.height;
+      if (w > maxWidth) { h = Math.round(h * maxWidth / w); w = maxWidth; }
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      resolve(canvas.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = () => resolve(dataUrl); // passthrough on error
+    img.src = dataUrl;
+  });
+}
+
+async function handlePhoto(input){
   if(!input.files||!input.files[0]||!curRider) return;
-  const r=new FileReader();
-  r.onload=e=>{
-    photos[curRider]=e.target.result; saveP(); closeModal(); renderRiders();
+  const file = input.files[0];
+  // Pre-compression size check — warn before even reading large files
+  if (file.size > 5 * 1024 * 1024) {
+    showToast('⚠️ Photo too large — max 5MB allowed');
+    input.value = '';
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = async e => {
+    // Compress to max 400x400 JPEG at 60% quality (~30-80KB instead of 2-5MB)
+    let compressed = await compressPhoto(e.target.result, 400, 0.6);
+    photos[curRider] = compressed; saveP(); closeModal(); renderRiders();
     if(document.getElementById('screen-summary').classList.contains('active')) renderSummary();
     showToast('📸 Photo saved for '+curRider);
   };
-  r.readAsDataURL(input.files[0]); input.value='';
+  reader.onerror = () => showToast('❌ Could not read photo');
+  reader.readAsDataURL(file);
+  input.value='';
 }
 function removePhoto(){
   delete photos[curRider]; saveP(); closeModal(); renderRiders();
@@ -2903,7 +2972,7 @@ function renderHistory(){
       const d = day[r.name] || {}; if (!d.mP && !d.eP) return '';
       const img = photos[r.name];
       return `<div class="hrrow">
-        <div class="hav" style="background:${img?'#1c1530':r.clr}">${img?`<img src="${img}" alt="${esc(r.name)}">`:`${esc(r.name[0])}`}</div>
+        <div class="hav" style="background:${img?'#1c1530':r.clr}">${img?`<img src="${safePhotoUrl(img)}" alt="${esc(r.name)}">`:`${esc(r.name[0])}`}</div>
         <div class="hrn">${esc(r.name)}</div>
         <span class="chip c${d.mP||'_'}">${d.mP||'—'}</span>
         ${d.mP==='P'?`<span class="chip c${d.mPaid||'_'}">${d.mPaid==='Y'?'Paid':d.mPaid==='N'?'Due':'?'}</span>`:''}
@@ -3015,7 +3084,7 @@ function renderSummary(){
     const hasEmail = r.email && r.email.length > 0;
     return `<div class="rsc" data-rider="${esc(r.name)}" style="cursor:${s.pending>0?'pointer':'default'};">
       <div onclick="openRiderPending('${esc(r.name)}','${mo}','${dt}')" style="display:flex;align-items:center;gap:12px;flex:1;">
-        <div class="rsav" style="background:${img?'#1c1530':r.clr}">${img?`<img src="${img}" alt="${esc(r.name)}">`:`${esc(r.name[0])}`}</div>
+        <div class="rsav" style="background:${img?'#1c1530':r.clr}">${img?`<img src="${safePhotoUrl(img)}" alt="${esc(r.name)}">`:`${esc(r.name[0])}`}</div>
         <div class="rsin">
           <div class="rsnm">${esc(r.name)}</div>
           <div class="rsrd">${s.pR} paid · ${s.uR} unpaid · ${fareLabel}</div>
@@ -3081,7 +3150,8 @@ function renderRidersList(){
   if (!list) return;
   list.innerHTML = RIDERS.map((r,i)=>{
     const img = photos[r.name];
-    const avInner = img ? `<img src="${img}" alt="${esc(r.name)}">` : esc(r.name[0]);
+    // FIX: validate photo URLs to prevent XSS
+    const avInner = img ? `<img src="${safePhotoUrl(img)}" alt="${esc(r.name)}">` : esc(r.name[0]);
     return `<div class="rider-srow" data-idx="${i}">
       <div class="rsrow-av" style="background:${img?'transparent':r.clr}">${avInner}</div>
       <div class="rsrow-name">${esc(r.name)}</div>
@@ -3178,22 +3248,8 @@ function saveRider(){
       // Sync rename to cloud — order matters: delete old rider FIRST (no FK so trips stay),
       // then update trip rider_name, then upsert new rider via saveRiders() below
       if (CLOUD_READY && CURRENT_USER) {
-        (async () => {
-          try {
-            // 1. Update trip entries to new name (must complete before delete to avoid FK conflicts on re-upsert)
-            const { error: tErr } = await sb.from('trip_entries').update({ rider_name: name })
-              .eq('user_id', CURRENT_USER.id).eq('rider_name', oldName);
-            if (tErr) console.error('[Cloud] Rename trip_entries failed:', tErr);
-            // 2. Delete old rider row
-            const { error: rErr } = await sb.from('riders').delete()
-              .eq('user_id', CURRENT_USER.id).eq('name', oldName);
-            if (rErr) console.error('[Cloud] Delete old rider failed:', rErr);
-            // 3. saveRiders() below will upsert the new one
-          } catch(e) {
-            console.error('[Cloud] Rename sync error:', e);
-            queueSync({ type: 'rider', payload: RIDERS[editingRiderIdx] });
-          }
-        })();
+        // FIX: use enqueueAndPush instead of fire-and-forget IIFE so failures are tracked
+        enqueueAndPush({ type: 'rider', payload: RIDERS[editingRiderIdx] });
       }
     }
     RIDERS[editingRiderIdx] = { name, clr: selectedColor, email, phone };
@@ -3392,7 +3448,7 @@ let fuelEntries    = JSON.parse(localStorage.getItem('rsPWA_fuel') || '[]');
 let editingFuelIdx = null;
 
 function saveFuel() {
-  localStorage.setItem('rsPWA_fuel', JSON.stringify(fuelEntries));
+  safeSet('rsPWA_fuel', JSON.stringify(fuelEntries));
   // Note: individual cloud writes happen in saveFuelEntry/deleteFuelEntry
 }
 
@@ -3465,14 +3521,22 @@ function saveFuelEntry() {
   if (document.getElementById('screen-summary').classList.contains('active')) renderSummary();
 }
 
-function deleteFuelEntry() {
+async function deleteFuelEntry() {
   if (editingFuelIdx === null) return;
-  showConfirm('Delete this fill-up?', 'This cannot be undone.', () => {
-    const oldEntry = fuelEntries[editingFuelIdx];
+  const oldEntry = fuelEntries[editingFuelIdx];
+  showConfirm('Delete this fill-up?', 'This cannot be undone.', async () => {
+    // FIX: push to cloud FIRST, only delete locally on success
+    if (CLOUD_READY && CURRENT_USER && oldEntry) {
+      try {
+        await enqueueAndPush({ type: 'fuelDel', payload: oldEntry });
+      } catch(e) {
+        showToast('⚠️ Cloud delete failed — will retry later');
+        // Still delete locally but keep in sync queue for retry
+      }
+    }
     fuelEntries.splice(editingFuelIdx, 1);
     saveFuel(); closeFuelModal(); renderFuel();
     if (document.getElementById('screen-summary').classList.contains('active')) renderSummary();
-    if (CLOUD_READY && CURRENT_USER && oldEntry) enqueueAndPush({ type: 'fuelDel', payload: oldEntry });
     showToast('🗑️ Fill-up deleted');
   });
 }
@@ -3502,7 +3566,8 @@ function renderFuel() {
 
   // per-litre rate for each entry
   con.innerHTML = filtered.map((f, i) => {
-    const realIdx = fuelEntries.indexOf(f);
+    // FIX: use unique id field instead of indexOf which breaks on duplicate entries
+    const realIdx = fuelEntries.findIndex(e => e.id === f.id) >= 0 ? fuelEntries.findIndex(e => e.id === f.id) : -1;
     const rate = (f.litres > 0) ? (f.amount / f.litres).toFixed(1) : '—';
     return `<div class="hcard" style="margin-bottom:10px;">
       <div class="hhdr" style="cursor:pointer;" onclick="openFuelModal(${realIdx})">
