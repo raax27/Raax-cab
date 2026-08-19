@@ -1,5 +1,5 @@
 // Bump CACHE version on every release to force update
-const CACHE = 'raax-v34-datafix';
+const CACHE = 'raax-v34-sw-fix';
 
 const STATIC_ASSETS = [
   './manifest.json',
@@ -26,6 +26,16 @@ self.addEventListener('activate', e => {
 self.addEventListener('fetch', e => {
   const req = e.request;
   const url = new URL(req.url);
+
+  // CRITICAL FIX: NEVER cache Supabase API calls (or any cross-origin API).
+  // Previously these fell through to the "static assets: cache first" branch
+  // below, so the app would receive stale cached trip/rider/settings data
+  // on every reopen instead of fresh data from the database — this was the
+  // root cause of data appearing to "vanish" after killing the app.
+  if (url.hostname.endsWith('.supabase.co') || url.origin !== self.location.origin) {
+    e.respondWith(fetch(req));
+    return;
+  }
 
   // HTML / navigation: ALWAYS network first to get latest code
   if (req.mode === 'navigate' || req.destination === 'document' ||
