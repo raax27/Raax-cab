@@ -2872,33 +2872,90 @@ function tog(rider, field, val) {
   }
 }
 
-  // For P/A (Present/Absent): toggle off if already selected
-  // For Y/N (Paid/NotPaid): ALWAYS SET, never toggle off — avoids the bug where
-  // tapping Not-Paid when mPaid was already auto-defaulted to N would clear it back to ''
-  if (field === 'mPaid' || field === 'ePaid') {
-    day[rider][field] = val; // always set, never clear
-  } else {
-    day[rider][field] = day[rider][field] === val ? '' : val;
+function tog(rider, field, val) {
+  const date = document.getElementById('logDate').value;
+  const day = getDay(date);
+
+  // Always create the rider record before using it.
+  if (!day[rider] || typeof day[rider] !== 'object') {
+    day[rider] = {};
   }
 
-  // Clearing Present also clears Paid status
-  if(field==='mP'&&day[rider][field]!=='P') day[rider].mPaid='';
-  if(field==='eP'&&day[rider][field]!=='P') day[rider].ePaid='';
-  // When Present is tapped and no paid status set yet, default to Not-Paid
-  if(field==='mP'&&day[rider].mP==='P'&&!day[rider].mPaid) day[rider].mPaid='N';
-  if(field==='eP'&&day[rider].eP==='P'&&!day[rider].ePaid) day[rider].ePaid='N';
-  // Lock in the fare at the time this trip is logged.
-  if ((day[rider].mP === 'P' || day[rider].eP === 'P') && !day[rider].fareAtTime) {
-    day[rider].fareAtTime = riderFare(rider);
+  const d = day[rider];
+
+  // Present / Absent
+  if (field === 'mP' || field === 'eP') {
+    d[field] = (d[field] === val) ? '' : val;
   }
-  if (day[rider].mP !== 'P' && day[rider].eP !== 'P') {
-    delete day[rider].fareAtTime;
+
+  // Paid / Not Paid
+  else if (field === 'mPaid' || field === 'ePaid') {
+    d[field] = val;
   }
-  save(); renderRiders(); updateStats();
+
+  // Unknown field - don't modify anything.
+  else {
+    console.warn('Unknown trip field:', field);
+    return;
+  }
+
+  // Morning payment only makes sense when Morning is Present.
+  if (d.mP !== 'P') {
+    d.mPaid = '';
+  }
+
+  // Evening payment only makes sense when Evening is Present.
+  if (d.eP !== 'P') {
+    d.ePaid = '';
+  }
+
+  // Default a newly-present trip to Not Paid.
+  if (d.mP === 'P' && !d.mPaid) {
+    d.mPaid = 'N';
+  }
+
+  if (d.eP === 'P' && !d.ePaid) {
+    d.ePaid = 'N';
+  }
+
+  // Lock the current fare when at least one trip is present.
+  if (
+    (d.mP === 'P' || d.eP === 'P') &&
+    !d.fareAtTime
+  ) {
+    d.fareAtTime = riderFare(rider);
+  }
+
+  // Remove the fare if the rider has no trips.
+  if (d.mP !== 'P' && d.eP !== 'P') {
+    delete d.fareAtTime;
+  }
+
+  // Save local state.
+  save();
+
+  // Refresh the rider cards.
+  renderRiders();
+
+  // Refresh dashboard/statistics.
+  updateStats();
+
+  // Sync with Supabase.
   if (CLOUD_READY && CURRENT_USER) {
-    enqueueAndPush({ type: 'trip', payload: { date, rider, d: day[rider] } });
+    enqueueAndPush({
+      type: 'trip',
+      payload: {
+        date: date,
+        rider: rider,
+        d: d
+      }
+    });
   }
 }
+
+function onDateChange(){renderRiders();}
+
+async function saveEntry(){
 function onDateChange(){renderRiders();}
 async function saveEntry(){
   const date=document.getElementById('logDate').value;
