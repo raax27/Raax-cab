@@ -711,7 +711,7 @@ html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);fon
         </div>
       </div>
 
-      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.3.7 — ☁️ Cloud Sync Fixed</div>
+      <div style="text-align:center;color:var(--muted);font-size:11px;margin-top:24px;font-weight:700;">RAAX v3.3.9 — 🔐 Auth Guard</div>
     </div>
 
   </div>
@@ -3373,6 +3373,17 @@ document.getElementById('riderModal').addEventListener('click',function(e){if(e.
 
 // ── NAV ───────────────────────────────────────────────────────
 function goTo(name){
+  // SECURITY FIX: Defense-in-depth auth guard. If cloud is configured but the
+  // user is not authenticated, block ALL internal navigation and force the
+  // login screen — regardless of what caused CURRENT_USER to become null
+  // (session expiry race, SIGNED_OUT event timing, etc). This is a second,
+  // independent gate on top of the startup check, so a single failure point
+  // can never leave the app browsable without authentication.
+  if (isCloudConfigured() && !CURRENT_USER && name !== 'auth') {
+    showAuthWrap();
+    showAuthScreen('login');
+    return;
+  }
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.querySelectorAll('.nb').forEach(b=>b.classList.remove('active'));
   document.getElementById('screen-'+name).classList.add('active');
@@ -4189,17 +4200,30 @@ window.addEventListener('DOMContentLoaded', () => {
       indicator.style.transform = `translateX(-50%) translateY(14px)`;
       spinner.classList.add('spinning'); label.textContent = 'Refreshing…'; haptic('success');
       setTimeout(() => {
-        const id = (document.querySelector('.screen.active') || {}).id || '';
-        if (id === 'screen-log')      { renderRiders(); updateStats(); }
-        if (id === 'screen-history')  { renderHistory(); }
-        if (id === 'screen-summary')  { renderSummary(); }
-        if (id === 'screen-fuel')     { renderFuel(); }
-        if (id === 'screen-settings') { renderRidersList(); renderLastUpdated(); }
-        showToast('✅ Refreshed');
-        spinner.classList.remove('spinning');
-        indicator.classList.remove('visible');
-        indicator.style.transform = `translateX(-50%) translateY(-60px)`;
-        triggered = false;
+        // FIX: try/finally ensures the indicator ALWAYS resets, even if a
+        // render function throws. Previously an exception here (e.g. from
+        // renderRiders() hitting an inconsistent state) left the indicator
+        // permanently stuck showing "Refreshing…" with no way to recover
+        // short of a full page reload.
+        try {
+          const id = (document.querySelector('.screen.active') || {}).id || '';
+          if (id === 'screen-log')      { renderRiders(); updateStats(); }
+          if (id === 'screen-history')  { renderHistory(); }
+          if (id === 'screen-summary')  { renderSummary(); }
+          if (id === 'screen-fuel')     { renderFuel(); }
+          if (id === 'screen-settings') { renderRidersList(); renderLastUpdated(); }
+          showToast('✅ Refreshed');
+        } catch(e) {
+          console.error('[PullToRefresh] Render failed:', e);
+          showToast('⚠️ Refresh failed — try reopening the app');
+        } finally {
+          spinner.classList.remove('spinning');
+          indicator.classList.remove('visible');
+          indicator.style.transform = `translateX(-50%) translateY(-60px)`;
+          label.textContent = 'Pull to refresh';
+          spinner.textContent = '↓';
+          triggered = false;
+        }
       }, 700);
     } else {
       indicator.classList.remove('visible');
