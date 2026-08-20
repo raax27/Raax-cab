@@ -2714,7 +2714,7 @@ function renderRiders() {
   }
 
   shown.forEach(rider => {
-    const d = day[rider.name];
+    const d = day[rider.name] || {};
     const s = calcR(rider.name);
     // BUG-10 FIX: count all Present slots across ALL time for the "rides logged" counter
     const totalRides = Object.values(entries).reduce((acc, dayData) => {
