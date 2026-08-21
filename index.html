@@ -3518,6 +3518,8 @@ function goTo(name){
     showAuthScreen('login');
     return;
   }
+  // Add this line to make it accessible to HTML onclick attributes
+  window.goTo = goTo; 
   document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));
   document.querySelectorAll('.nb').forEach(b=>b.classList.remove('active'));
   document.getElementById('screen-'+name).classList.add('active');
