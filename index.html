@@ -3558,6 +3558,7 @@ function goTo(name){
       changePassRow.style.display = 'none';
     }
   }
+  window.goTo = goTo;
 }
 function clearAll(){
   showConfirm('🗑️ Delete ALL data?', 'This permanently deletes ALL trip logs and fuel entries from cloud + local. Riders stay.', async () => {
